@@ -10,7 +10,6 @@ import numpy as np
 import pandas as pd
 import matplotlib.pyplot as plt
 import matplotlib
-import mod.my_plotter as mp
 from scipy.optimize import minimize 
 from scipy.integrate import solve_ivp
 from sklearn.linear_model import LinearRegression
@@ -152,6 +151,7 @@ if __name__ == '__main__':
     plt.close('all')
     
     # Regression for twill and metal
+    regression_bubble(raw_file='data/raw/v_d32_glass.txt')
     regression_bubble(raw_file='data/raw/v_d32_twill.txt')
     regression_bubble(raw_file='data/raw/v_d32_metal.txt')
     
