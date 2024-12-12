@@ -1,0 +1,9 @@
+{
+    "cF_bot_0": 0.015,
+    "V_R": 0.2,
+    "u_inf": [1.67, 8.34, 15.0, 15.0, 15.0, 0.0, 0.0],
+    "c_top_3_inf": 0.06216,
+    "c_bot_3_inf": 0.00338,
+    "online_measurement": false,
+    "experiment_type": "constant_u"
+}

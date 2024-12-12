@@ -17,14 +17,14 @@ from sklearn.linear_model import LinearRegression
 from atpf.utils import my_plotter as mp
 from atpf import ATPFSolver
 
-mp.init_plot(scl_a4=1, page_lnewdth_cm=15.9, fnt='Arial', mrksze=7, 
+mp.init_plot(scl_a4=1, page_lnewdth_cm=13.7, fnt='Latin Modern Roman', mrksze=7, 
              fontsize = 11, labelfontsize=11, tickfontsize=9, 
-             aspect_ratio=[15.9, 6])
+             aspect_ratio=[13.7, 6])
 
 # Non-linear regression for bubble size 
-def regression_bubble(raw_file='data/raw/v_d32_twill.txt'):
+def regression_bubble(raw_file='data/raw/v_d32_twill.txt', text=True):
     # Append full path
-    full_path = os.path.join(os.path.dirname( __file__ ),"..","..",raw_file)
+    full_path = os.path.join(os.path.dirname( __file__ ),"..","..", raw_file)
     exp_name = raw_file.split('_')[-1].split('.')[0]
     
     # Import the data from .txt
@@ -43,27 +43,29 @@ def regression_bubble(raw_file='data/raw/v_d32_twill.txt'):
     d_mod = P[0]*v_mod+P[1]*np.log(v_mod)+P[2]
     
     # Create plot
-    mp.init_plot(scl_a4=1, page_lnewdth_cm=15.9, fnt='Arial', mrksze=7, 
+    mp.init_plot(scl_a4=2, page_lnewdth_cm=13.7, fnt='Arial', mrksze=7, 
                  fontsize = 11, labelfontsize=11, tickfontsize=9, 
-                 aspect_ratio=[15.9, 6])
+                 aspect_ratio=[13.7, 13.7])
     
     fig, ax = plt.subplots() 
     ax.scatter(v, d, edgecolor='k', color=mp.green, zorder=3)
     ax.plot(v_mod, d_mod, linestyle='-.', color=mp.green, zorder=2)
     
     # Customize axes
-    ax.set_xlabel(r'$\dot{V}_{\mathrm{gas}}$ / mL$\,$min$^{-1}$')
-    ax.set_ylabel(r'$\overline{d}$ / $\mu$m')
-    ax.text(0.98, 0.05, r"$\mathrm{RMSE}"+f"={cost_bubble(P,v,d):.3f}$", 
+    ax.set_xlabel(r'$\dot{V}_{\mathrm{g}}$ / $\mathrm{mL\,min^{-1}}$')
+    ax.set_ylabel(r'$\overline{d}_\mathrm{b}$ / $\mathrm{\mu m}$')
+    ax.text(0.98, 0.05, r"$\mathrm{RMSE}"+f"={cost_bubble(P,v,d):.1f}$", 
             transform=ax.transAxes, verticalalignment='bottom', 
             horizontalalignment='right',
             bbox=dict(boxstyle='round', facecolor='w', alpha=1))
-    ax.text(0.02, 0.95, exp_name, 
-            transform=ax.transAxes, verticalalignment='top', 
-            horizontalalignment='left',
-            bbox=dict(boxstyle='round', facecolor='w', alpha=1))
+    if text:
+        ax.text(0.02, 0.95, exp_name, 
+                transform=ax.transAxes, verticalalignment='top', 
+                horizontalalignment='left',
+                bbox=dict(boxstyle='round', facecolor='w', alpha=1))
     ax.grid(True)
-
+    ax.set_xlim([0,ax.get_xlim()[1]])
+    # ax.set_ylim([min(d)*0.9,max(d)*1.1])
 
     plt.tight_layout()
     
@@ -77,6 +79,7 @@ def regression_bubble(raw_file='data/raw/v_d32_twill.txt'):
     plt.savefig(fig_exp_pth)
     
     # Export model
+    print(P)
     np.save(file_exp_pth,
             {'Model':'d=P[0]*v+P[1]*np.log(v)+P[2]',
              'P':P, 'vg_min':min(v), 'vg_max':max(v)})
@@ -151,9 +154,9 @@ if __name__ == '__main__':
     plt.close('all')
     
     # Regression for twill and metal
-    regression_bubble(raw_file='data/raw/v_d32_glass.txt')
-    regression_bubble(raw_file='data/raw/v_d32_twill.txt')
-    regression_bubble(raw_file='data/raw/v_d32_metal.txt')
+    # regression_bubble(raw_file='data/raw/v_d32_glass.txt')
+    regression_bubble(raw_file='data/raw/v_d32_twill.txt', text=False)
+    # regression_bubble(raw_file='data/raw/v_d32_metal.txt')
     
 
     

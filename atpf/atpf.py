@@ -57,8 +57,11 @@ class ATPFSolver():
         if self.n_comp != len(self.vg):
             raise ValueError('(!) Number of compartments does not match input for v_g') 
         
-        if self.n_comp != len(self.scl_A):
-            raise ValueError('(!) Number of compartments does not match input for scl_A')    
+        if self.n_comp != len(self.kappa_data['kappa'][0]):
+            raise ValueError('(!) Number of compartments does not match input for kappa_data')   
+            
+        if len(self.kappa_data['t']) != len(self.kappa_data['kappa'][:,0]):
+            raise ValueError('(!) Number of provided timesteps does not match input for kappa_data')   
         
         if not self.inlet_g_medium in ['glass','metal','twill']:
             raise ValueError("(!) Select correct gas inlet medium. Valid options are ['glass','metal','twill']")
@@ -108,13 +111,21 @@ class ATPFSolver():
         gas_v_d_data = np.load(self.gas_v_d_file,allow_pickle=True).item()
         self.P = gas_v_d_data['P']
         self.vg_range = [gas_v_d_data['vg_min'],gas_v_d_data['vg_max']]
-
+        
+        # Transfer kappa data into volume ratio and add to dictionary
+        self.kappa_data['v'] = self.kappa_to_v(self.kappa_data['kappa'])
+        
+        # Consistency check
+        self.check_consistency()
         
     # Right hand side function to solve the transport equations suitable for use with scipy.solve_ivp
-    def transport(self,t,c_1d):
+    def transport(self, t, c_1d):
         # Reshape 1D array into 2D representation (easier to understand)
-        c = c_1d.reshape(self.shape)
-        dcdt = np.zeros(c.shape)
+        # Last two entries are for M_e_integral and M_f_integral!
+        c = c_1d[:-2].reshape(self.shape)
+        M_c = np.zeros(c.shape)
+        M_e = np.zeros(c.shape)
+        M_f = np.zeros(c.shape)
         
         # Define whether or not a constant flotation rate should be used
         if self.fr_case == 'const':
@@ -129,33 +140,54 @@ class ATPFSolver():
                     # Note: vg[i+1] to account for feed compartment
                     fr[i] = self.fr_from_v(self.vg[i-1],c[1,i],ad_case=self.ad_case)
             
-            # print(fr)
+        # Get currenct correction term for mixing zone height
+        if self.h_case == 'const':
+            h_corr = np.ones(self.vg.shape) 
+        elif self.h_case == 'corr_individ':
+            # h_corr = self.vg/(self.vg+self.k_h)
+            h_corr = 1/(1+np.exp(-self.k_h*(self.vg-30)))
+        else:
+            vg_sum = np.sum(self.vg)
+            # h_corr = np.ones(self.vg.shape)*vg_sum/(vg_sum+self.k_h)
+            # h_corr = np.ones(self.vg.shape)*(1-np.exp(-self.k_h*vg_sum))
+            h_corr = np.ones(self.vg.shape)/(1+np.exp(-self.k_h*(vg_sum-30)))
+            
+        # Calculate the current effective interface
+        if self.kappa_case == 'const':
+            # Use first entry in kappa_data
+            A_e = self.A*(1+h_corr*self.k_A*6*(1+1/self.kappa_data['v'][0,:])) 
+        else:
+            # Look up corresponding time
+            idx = np.searchsorted(self.kappa_data['t'],t,side='right')-1
+            A_e = self.A*(1+h_corr*self.k_A*6*(1+1/self.kappa_data['v'][idx,:]))
         
         # Move through all compartments horizontally (start at 1 to skip feed)
         for i in range(1,self.shape[1]):
             ## (1) Convection 
             ### IN
-            dcdt[:,i] += c[:,i-1]*self.f[:,i-1]*self.v[:,i-1]/self.v[:,i]
+            M_c[:,i] += c[:,i-1]*self.f[:,i-1]*self.v[:,i-1]/self.v[:,i]
             ### OUT
-            dcdt[:,i] -= c[:,i]*self.f[:,i]
+            M_c[:,i] -= c[:,i]*self.f[:,i]
             
             ## (2) Flotation
             ### IN
-            dcdt[0,i] += c[1,i]*fr[i]*self.v[1,i]/self.v[0,i]
+            M_f[0,i] += c[1,i]*fr[i]*self.v[1,i]/self.v[0,i]
             ### OUT
-            dcdt[1,i] -= c[1,i]*fr[i]
+            M_f[1,i] -= c[1,i]*fr[i]
             
             ## (3) Diffusion across bot/top interface
             ## Note: Defined as flow from bot to top (can be negative)
             ### Equilibrium concentration in bot phase based on current concentrations and K_p
             c_inf_bot = (c[1,i]*(self.v_bot/self.v_top)+c[0,i])/(self.K_p+(self.v_bot/self.v_top))
             ### IN
-            dcdt[0,i] += (c[1,i]-c_inf_bot)*self.A*self.scl_A[i-1]*self.k_i/self.v[0,i]
+            M_e[0,i] += (c[1,i]-c_inf_bot)*A_e[i-1]*self.k_i/self.v[0,i]
             ### OUT
-            dcdt[1,i] -= (c[1,i]-c_inf_bot)*self.A*self.scl_A[i-1]*self.k_i/self.v[1,i]
-            
-        # Reshape to 1D before returning
-        return dcdt.reshape(-1)
+            M_e[1,i] -= (c[1,i]-c_inf_bot)*A_e[i-1]*self.k_i/self.v[1,i]
+         
+        dcdt = M_c + M_e + M_f
+        
+        return np.append(dcdt.reshape(-1),
+                         np.array([np.sum(M_e[0,:]),np.sum(M_f[0,:])]))
         
     # Solver for atpf
     def solve(self, t_eval=None, verbose=0):
@@ -164,30 +196,20 @@ class ATPFSolver():
             t_eval = self.t_eval
             
         # Solve ODE for given parameters. Reshape c array to 1D
-        res = solve_ivp(self.transport, 
-                        [0,self.t_max], 
-                        self.c0.reshape(-1),
+        res = solve_ivp(fun=self.transport, 
+                        t_span=[0,self.t_max], 
+                        y0=np.append(self.c0.reshape(-1),
+                                  np.array([0,0])),
                         t_eval=t_eval)
-        
+            
         # Extract info
         self.t = res.t
-        self.c = res.y.reshape((self.shape[0],self.shape[1],len(self.t)))
+        self.c = res.y[:-2,:].reshape((self.shape[0],self.shape[1],len(self.t)))
+        self.M_e_int = res.y[-2,:]
+        self.M_f_int = res.y[-1,:]
         self.w = np.zeros(self.c.shape)
         self.w[0,:,:] = self.c_to_w(self.c[0,:,:], phase='top')
         self.w[1,:,:] = self.c_to_w(self.c[1,:,:], phase='bot')
-        
-        # Debugging/control: Time-specific flotation rate array
-        self.fr_t = np.zeros((len(self.t),self.shape[1]))
-        for i in range(len(self.t)):
-            for j in range(1,self.shape[1]):
-                # print(i,j)
-                if self.fr_case == 'const':
-                    self.fr_t[i,j-1] = self.fr0
-                elif self.c[1,j,i] == 0:
-                    self.fr_t[i,j-1] = 0                 
-                else:
-                    self.fr_t[i,j-1] = self.fr_from_v(self.vg[j-1],self.c[1,j,i],
-                                                      ad_case=self.ad_case, verbose=verbose)
         
         # Calculate Separation efficiency 
         self.E = self.E_from_w()
@@ -263,6 +285,11 @@ class ATPFSolver():
             print(f'number of bubbles in steady state: {Nb:.3e}')
             
         return fr
+    
+    # Correlation from conductivity to volume ratio mixing zone
+    def kappa_to_v(self, kappa):
+        # kappa in mS/cm
+        return -0.0146*kappa+0.767
         
     # Converting w/w in mol/m³
     def w_to_c(self,w,phase='bot'):

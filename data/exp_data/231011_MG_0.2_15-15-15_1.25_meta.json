@@ -1,0 +1,7 @@
+{
+    "cF_bot_0": 0.0125,
+    "V_R": 0.2,
+    "u_inf": [1.67, 8.34, 15.0, 15.0, 15.0, 0.0, 0.0],
+    "online_measurement": false,
+    "experiment_type": "constant_u"
+}

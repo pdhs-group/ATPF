@@ -22,12 +22,12 @@ config = {
         'h_bot': 0.097,                      # Height of bot phase [m]
         
         # Process Parameters
-        'vg': [30,20,10],                    # Gas volume flow per compartment [mL/min]
+        'vg': [5,5,5],                    # Gas volume flow per compartment [mL/min]
         'Q_top': 1.67e-6/60,                 # Volume flow top [m³/s]
         'Q_bot': 8.33e-6/60,                 # Volume flow bot [m³/s]
         't_max': 60*60,                      # Process time [s]
         'w0_top': 0,                         # Feed concentration top [w/w]
-        'w0_bot': 0.02,                      # Feed concentration bot [w/w]
+        'w0_bot': 0.01,                      # Feed concentration bot [w/w]
         'w0_case':'full',                    # 'empty': w_i(0)=0, 'full': w_i(0)=w0
         'inlet_g_medium': 'twill',           # Gassing medium used ['glass','metal',twill']
         
@@ -42,7 +42,13 @@ config = {
         'g': 9.81,                           # Gravitational constant [m²/s]
         
         # Diffusion specific parameters
-        'scl_A': [1,1,1],                    # Scaling factor of bot/top interfacial area per compartment [-]
+        'kappa_case':'const',                  # Use experimental conductivity data? ['const','exp']
+        # Conductivity data. kappa[i,:]: Conductivity at time t[i]
+        'kappa_data':{'t': np.array([0]),              
+                      'kappa': np.array([[50,50,50]])},
+        'k_A': 13.2,                            # Height mixing zone h / droplet diameter d [-]
+        'h_case': 'corr_sum',                # Correct h based on vg? ['const','corr_individ','corr_sum']
+        'k_h': 0.01,                          # Correction factor h'=h*vg/(vg+k_h)
         'k_i': 8e-5,                         # Mass transport coefficient through interface [m/s]
         'K_p': 16.51,                        # Partition coefficient K_p=c_top/c_bot [-]
         
@@ -50,5 +56,5 @@ config = {
         'k_a': 2e-1,                         # Adsorption rate [m³/mol s]
         'k_d': 1e-2,                         # Desorption rate [1/s]
         'K': 20,                             # Steady state Langmuir constant [m³/mol]
-        'R_max': 5e-7,                       # Maximum surface loading [mol/m²]
+        'R_max': 0,                       # Maximum surface loading [mol/m²]
 }
