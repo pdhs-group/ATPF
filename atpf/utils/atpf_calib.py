@@ -9,8 +9,10 @@ sys.path.insert(0,os.path.join(os.path.dirname( __file__ ),"..",".."))
 import numpy as np
 import pandas as pd
 import matplotlib.pyplot as plt
-from scipy.optimize import minimize, brute 
+from scipy.optimize import minimize, brute, differential_evolution 
 import json
+from SALib.sample import saltelli
+from SALib.analyze import sobol
 
 from atpf.utils import my_plotter as mp
 from atpf import ATPFSolver
@@ -72,6 +74,7 @@ def read_folder(path='data/exp_data', save=True):
         
     # Read every file_name and store result in exp_data list (corresponding index to file_names)
     for i in range(len(files)):
+        # print(files[i])
         e = read_exp(files[i],path)
         
         # if None is returned (no online measurement), do not save!
@@ -98,6 +101,7 @@ def simulate_DOE(MP, case='all', path='data/exp_data', cf_file='exp_data_study_c
     # Loop through all experiments:
     sim_data = []
     for i in range(len(exp_names)):
+        # print(exp_names[i])
         if verbose > 0:
             print('Simulating experiment ', exp_names[i])
         
@@ -116,9 +120,7 @@ def simulate_DOE(MP, case='all', path='data/exp_data', cf_file='exp_data_study_c
 
         # Set model parameters provided by MP
         a.R_max = MP['R_max']
-        a.K = MP['K']
-        a.k_A = MP['k_A']
-        a.k_h = MP['k_h']
+        a.d_d = MP['d_d']
         
         # If a certain effect is neglected make adjustments here
         if case == 'no_f':
@@ -155,7 +157,7 @@ def simulate_DOE(MP, case='all', path='data/exp_data', cf_file='exp_data_study_c
     return exp_names, exp_data, sim_data
 
 def opt_MP_DOE(param0, algo='minimize', crit='RMSE_full', case='all', path='data/exp_data', 
-               cf_file='exp_data_study_config.py', verbose=1):
+               cf_file='exp_data_study_config.py', bounds=None, verbose=1):
     
     if verbose > 0:
         print('Starting model parameter optimization..')
@@ -165,48 +167,59 @@ def opt_MP_DOE(param0, algo='minimize', crit='RMSE_full', case='all', path='data
             print('No flotation transport')
         elif case == 'no_e':
             print('No extraction transport')
+    
+    if bounds is None:
+        if case == 'no_f':
+            bounds = ((param0[0],param0[0]),(1e-6,1e-3))
+        elif case == 'no_e':
+            bounds = ((-7,-3),(param0[1],param0[1]))
+        else:
+            bounds = ((-7,-3),(1e-6,1e-3))        
+
         
     if algo == 'minimize':
         opt_res = minimize(cost_MP_DOE, param0, method='Nelder-Mead', 
                            args=(crit, case, path, cf_file, 1), #tol=1e-6,
-                           bounds=((-8,-2),(1,1),(0,100),(0,1)), 
-                           # bounds=((0,0),(0,0),(0,100),(0,1)), 
+                           bounds=bounds, 
                            options={'maxiter':100})
-        MP_opt = {'R_max': 10**opt_res.x[0],
-              'K': opt_res.x[1],
-              'k_A': opt_res.x[2],
-              'k_h': opt_res.x[3]}
-    elif algo == 'brute':
-        opt_res = brute(cost_MP_DOE, ranges=((-8,-2),(0,100),(0,100),(0,10)),
-                        args=(crit, case, path, cf_file, 1), Ns=5)
+        sol = opt_res.x
+
+    elif algo == 'evo':
+        opt_res = differential_evolution(cost_MP_DOE, bounds, maxiter=200, popsize=10,
+                                         seed = 1, disp=True, polish=True, init='sobol',
+                                         args=(crit, case, path, cf_file, 1))
+        sol = opt_res.x
         
-        MP_opt = {'R_max': 10**opt_res.x0[0],
-              'K': opt_res.x0[1],
-              'k_A': opt_res.x0[2],
-              'k_h': opt_res.x0[3]}
+    elif algo == 'brute':
+        opt_res = brute(cost_MP_DOE, ranges=bounds,
+                        args=(crit, case, path, cf_file, 1), Ns=5)
+        sol = opt_res.x0
+        
     else:
         raise ValueError('Provide correct optimization algorithm')
+        
+            
+    MP_opt = {'R_max': 10**sol[0],
+              'd_d': sol[1]}
 
     print('#####################')
-    print(f'The optimized model parameters are {10**opt_res.x[0]:.2e} | {opt_res.x[1]:.1f} | {opt_res.x[2]:.1f} | {opt_res.x[3]:.1f}')
+    print(f'The optimized model parameters are {10**sol[0]:.3e} | {sol[1]:.3e}')
+    
+    exp_pth = os.path.join(os.path.dirname( __file__ ),"..","..",
+                           'export/opt_'+algo+'_'+case+'.npy')
+    np.save(exp_pth, MP_opt)
     
     return MP_opt
     
 def cost_MP_DOE(param, crit='RMSE_full', case='all', path='data/exp_data', cf_file='exp_data_study_config.py', verbose=1):
     ### param is a list containing all parameters that require optimization
     ## param[0]: log10(R_max)
-    ## param[1]: K
-    ## param[2]: k_A
-    ## param[3]: k_h
+    ## param[1]: d_d
     R_max = 10**param[0]
-    K = param[1]
-    k_A = param[2]
-    k_h = param[3]
+    d_d = param[1]
     
     MP = {'R_max': 10**param[0],
-          'K': param[1],
-          'k_A': param[2],
-          'k_h': param[3]}
+          'd_d': param[1]}
         
     # Simulate DOE for current MP
     exp_names, exp_data, sim_data = simulate_DOE(MP, case, path=path, cf_file=cf_file, verbose=0)
@@ -219,11 +232,40 @@ def cost_MP_DOE(param, crit='RMSE_full', case='all', path='data/exp_data', cf_fi
             loss += np.sqrt(np.mean((sim_data[i]['w02_exp']-sim_data[i]['w02_mod'])**2))/len(exp_names)
     
     if verbose > 0:
-        print(f'Current MP: {R_max:.2e} | {K:.1f} | {k_A:.3e} | {k_h:.3e} || Loss: {loss:.2e}')
+        print(f'Current MP: {R_max:.2e} | {d_d:.3e} || Loss: {loss:.2e}')
             
     return loss
 
-def visualize_MP_DOE(MP, case='all', path='data/exp_data', cf_file='exp_data_study_config.py'):
+def sensitivity_analysis(N_samples=1000, second_order=True, 
+                         case='all', path='data/exp_data', cf_file='exp_data_study_config.py'):
+    problem = {
+    'num_vars': 3,
+    'names': ['R_max', 'K', 'd_d'],
+    'bounds': [[-7, -4],        # Range for R_max (log)
+               [1, 200],        # Range for K (lin)
+               [1e-5, 1e-3]]    # Range for d_d (lin)
+    }
+
+    param_values = saltelli.sample(problem, N_samples, calc_second_order=second_order)
+    print(f'Number of samples: {param_values.shape[0]}')
+    # param_values[:,3] = 10**param_values[:,3]
+    Y = np.zeros(param_values.shape[0])
+    for i in range(param_values.shape[0]):
+        Y[i] = cost_MP_DOE(param_values[i,:], case=case, path=path, cf_file=cf_file, verbose=1)
+    sobol_indices = sobol.analyze(problem, Y, calc_second_order=second_order)
+    
+    exp_pth = os.path.join(os.path.dirname( __file__ ),"..","..",
+                           'export/sobol_'+str(N_samples)+'.npy')
+    np.save(exp_pth, {'sobol_indices': sobol_indices,
+                      'problem': problem})
+    
+    
+    print('The Total Sobol Idices are:')
+    print(sobol_indices['ST'])
+    
+    return sobol_indices
+    
+def visualize_MP_DOE(MP, case='all', path='data/exp_data', cf_file='exp_data_study_config.py', legend=True):
     # Simulate full 
     exp_names, exp_data, sim_data = simulate_DOE(MP, case=case, path=path, cf_file=cf_file, verbose=0)
     RMSE = sum([sim_data[i]['RMSE'] for i in range(len(exp_names))])/len(exp_names)
@@ -234,31 +276,57 @@ def visualize_MP_DOE(MP, case='all', path='data/exp_data', cf_file='exp_data_stu
                  aspect_ratio=[13.7, 13.7/2])
     markers = ['o', 's', 'D', '^', 'v', '<', '>', 'h']
     
-    fig, ax = plt.subplots(1,2) 
-    for i in range(len(exp_names)):
-        ax[0].scatter(sim_data[i]['w02_exp'], sim_data[i]['w02_mod'], 
-                      edgecolor='k', zorder=1, label=exp_names[i],
-                      marker=np.random.choice(markers))
-    ax[0].axline((0, 0), slope=1, color=mp.red, linestyle='--', zorder=3)
+    if legend:
+        fig, ax = plt.subplots(1,2) 
+        for i in range(len(exp_names)):
+            ax[0].scatter(sim_data[i]['w02_exp'], sim_data[i]['w02_mod'], 
+                          edgecolor='k', zorder=1, label=exp_names[i],
+                          marker=np.random.choice(markers),
+                          linewidths=0.5, alpha=0.7)
+        ax[0].axline((0, 0), slope=1, color=mp.red, linestyle='--', zorder=3)
+        
+        # Customize axes
+        ax[0].set_xlabel(r'$w_{\mathrm{exp}}(0,2)$ / $-$')
+        ax[0].set_ylabel(r'$w_{\mathrm{mod}}(0,2)$ / $-$')
+        ax[0].text(0.98, 0.05, r"$\mathrm{RMSE}"+f"={RMSE:.2e}$", 
+                   transform=ax[0].transAxes, verticalalignment='bottom', 
+                   horizontalalignment='right',
+                   bbox=dict(boxstyle='round', facecolor='w', alpha=1))
     
-    # Customize axes
-    ax[0].set_xlabel(r'$w_{\mathrm{exp}}(0,2)$ / $-$')
-    ax[0].set_ylabel(r'$w_{\mathrm{mod}}(0,2)$ / $-$')
-    ax[0].text(0.98, 0.05, r"$\mathrm{RMSE}"+f"={RMSE:.3e}$", 
-               transform=ax[0].transAxes, verticalalignment='bottom', 
-               horizontalalignment='right',
-               bbox=dict(boxstyle='round', facecolor='w', alpha=1))
-
-    ax[0].grid(True)
-    ax[1].axis('off')  # Hide the axes of the right subplot
-    ax[1].legend(*ax[0].get_legend_handles_labels(), loc='center', ncol=2)
-
-    plt.tight_layout()
+        ax[0].grid(True)
+        ax[1].axis('off')  # Hide the axes of the right subplot
+        ax[1].legend(*ax[0].get_legend_handles_labels(), loc='center', ncol=2)
     
-    # Generate export strings
-    fig_exp_pth = os.path.join(os.path.dirname( __file__ ),"..","..",
-                               'export/w_exp_mod.pdf')
+        plt.tight_layout()
+        
+        # Generate export strings
+        fig_exp_pth = os.path.join(os.path.dirname( __file__ ),"..","..",
+                                   'export/w_exp_mod_leg.pdf')
     
+    else:
+        fig, ax = plt.subplots() 
+        for i in range(len(exp_names)):
+            ax.scatter(sim_data[i]['w02_exp'], sim_data[i]['w02_mod'], 
+                          edgecolor='k', zorder=1, label=exp_names[i],
+                          marker=np.random.choice(markers),
+                          linewidths=0.5, alpha=0.7)
+        ax.axline((0, 0), slope=1, color=mp.red, linestyle='--', zorder=3)
+        
+        # Customize axes
+        ax.set_xlabel(r'$w_{\mathrm{exp}}(0,2)$ / $-$')
+        ax.set_ylabel(r'$w_{\mathrm{mod}}(0,2)$ / $-$')
+        ax.text(0.98, 0.05, r"$\mathrm{RMSE}"+f"={RMSE:.3e}$", 
+                   transform=ax.transAxes, verticalalignment='bottom', 
+                   horizontalalignment='right',
+                   bbox=dict(boxstyle='round', facecolor='w', alpha=1))
+    
+        ax.grid(True)
+    
+        plt.tight_layout()
+        
+        # Generate export strings
+        fig_exp_pth = os.path.join(os.path.dirname( __file__ ),"..","..",
+                                   'export/w_exp_mod_noleg.pdf')
     # Export figure
     plt.savefig(fig_exp_pth)
     
@@ -304,9 +372,88 @@ def visualize_MP_exp(MP, name=None, idx=None, data=None, export=False,
     plt.tight_layout()
     
     if export:
-        plt.savefig('export/'+name+'.pdf')
+        fig_exp_pth = os.path.join(os.path.dirname( __file__ ),"..","..",
+                                   'export/individ_exp/'+name+'.pdf')
+        plt.savefig(fig_exp_pth)
     
     return ax, fig
+
+def visualize_vg_RMSE_EF(sim_data, exp_data, vg_case='sum', sort='vg', 
+                         export=False, export_name=''):
+    # Initialize
+    mp.init_plot(scl_a4=1, page_lnewdth_cm=13.7, fnt='Arial', mrksze=4, 
+                 fontsize = 12, labelfontsize=11, tickfontsize=9, 
+                 aspect_ratio=[13.7, 13.7/2])
+    
+    RMSE_arr = np.array([sim_data[i]['RMSE'] for i in range(len(sim_data))])
+    E_F_arr = np.array([sim_data[i]['M_e_int'][-1]/(sim_data[i]['M_e_int'][-1]+sim_data[i]['M_f_int'][-1]) for i in range(len(sim_data))])
+    if vg_case == 'sum':
+        vg_arr = np.array([sum(exp_data[i]['vg']) for i in range(len(exp_data))])
+    else:
+        vg_arr = np.array([max(exp_data[i]['vg']) for i in range(len(exp_data))])
+    N = np.arange(len(RMSE_arr))
+    
+    # if sort == 'vg':
+    #     idx = np.argsort(vg_arr)
+    # elif sort == 'RMSE':
+    #     idx = np.argsort(RMSE_arr)
+    # else:
+    #     idx = np.argsort(E_F_arr)
+    
+    # # Re-Sort
+    # vg_arr = vg_arr[idx]
+    # RMSE_arr = RMSE_arr[idx]
+    # E_F_arr = E_F_arr[idx]
+    
+    # bw = 0.25
+        
+    # Linear approximations
+    vg_cont = np.linspace(min(vg_arr), max(vg_arr),100)
+    c_RMSE = np.polyfit(vg_arr, RMSE_arr, 1)
+    RMSE_cont = np.polyval(c_RMSE, vg_cont)
+    c_E_F = np.polyfit(vg_arr, E_F_arr, 1)
+    E_F_cont = np.polyval(c_E_F, vg_cont)
+    
+    # Plot
+    fig, ax1 = plt.subplots()  
+    ax2 = ax1.twinx() 
+    # ax.bar(N-1.5*bw, vg_arr/max(vg_arr), width=bw)     
+    # ax.bar(N, RMSE_arr/max(RMSE_arr), width=bw)
+    # ax.bar(N+1.5*bw, E_F_arr/max(E_F_arr), width=bw)
+    ax1.scatter(vg_arr, RMSE_arr, edgecolor='k', color=mp.green, 
+               marker='s', zorder=2, label=r'RMSE')
+    ax2.scatter(vg_arr, E_F_arr, edgecolor='k', color=mp.red, 
+               marker='s', zorder=2, label=r'Transport')
+
+    ax1.plot(vg_cont, RMSE_cont, color=mp.green, marker=None, linestyle='-.',
+             zorder=0)
+    ax2.plot(vg_cont, E_F_cont, color=mp.red, marker=None, linestyle='-.',
+             zorder=0)
+    
+    # Customize axes
+    if vg_case == 'sum':
+        ax1.set_xlabel(r'$\sum \dot{V}_g$ / $\mathrm{mL\,min^{-1}}$')
+    else:
+        ax1.set_xlabel(r'max $\dot{V}_g$ / $\mathrm{mL\,min^{-1}}$')
+
+    ax1.set_ylabel('RMSE / $-$')
+    ax2.set_ylabel(r'$\dot{M}_{\mathrm{e,int}}/(\dot{M}_{\mathrm{e,int}}+\dot{M}_{\mathrm{f,int}})$ / $-$')
+    ax1.legend(loc='upper left')
+    ax2.legend(loc='center right')
+    # ax1.set_ylim([0,ax1.get_ylim()[1]])
+    ax1.set_ylim([0,np.ceil(max(RMSE_arr)*1000)/1000+0.002])
+    ax2.set_ylim([0,1])
+    
+    ax1.grid(True)
+    plt.tight_layout()
+    
+    fig_exp_pth = os.path.join(os.path.dirname( __file__ ),"..","..",
+                               'export/vg_RMSE_EF_'+export_name+'.pdf')
+    
+    if export:
+        plt.savefig(fig_exp_pth)
+    
+    return RMSE_arr, E_F_arr, vg_arr
 
 def visualize_hist_RMSE(sim_data, export=False):
     # Initialize
@@ -344,7 +491,7 @@ def visualize_hist_E_F(sim_data, export=False):
     ax.hist(E_F_arr)
     
     # Customize axes
-    ax.set_xlabel('$\dot{M}_{\mathrm{e,int}}/(\dot{M}_{\mathrm{e,int}}+\dot{M}_{\mathrm{f,int}})$ / $-$')
+    ax.set_xlabel(r'$\dot{M}_{\mathrm{e,int}}/(\dot{M}_{\mathrm{e,int}}+\dot{M}_{\mathrm{f,int}})$ / $-$')
     ax.set_ylabel('h / $-$')
     ax.grid(True)
     plt.tight_layout()
@@ -359,8 +506,8 @@ def visualize_corr_h(k_h):
     # Generate data
     vg = np.linspace(1,100,1000)
     # k = 1+vg/(vg+k_h)
-    # k = 1-np.exp(-k_h*vg)
-    k = 1/(1+np.exp(-k_h*(vg-30)))
+    k = 1-np.exp(-k_h*vg)
+    # k = 1/(1+np.exp(-k_h*(vg-30)))
     
     # Initialize
     mp.init_plot(scl_a4=1, page_lnewdth_cm=13.7, fnt='Arial', mrksze=4, 
@@ -372,46 +519,106 @@ def visualize_corr_h(k_h):
     ax.plot(vg, k, marker='s', color=mp.green, mec='k')
 
     # Customize axes
-    ax.set_xlabel('$\sum \dot{V}_g$ / $\mathrm{mL\,min^{-1}}$')
+    ax.set_xlabel(r'$\sum \dot{V}_g$ / $\mathrm{mL\,min^{-1}}$')
     ax.set_ylabel('$k*$ / $-$')
     ax.grid(True)
     plt.tight_layout()  
+
+def visualize_sensitivity(sob_i=None, data='sobol_10', export=False):
+    
+    # If data is not provided, load default
+    if sob_i is None: 
+        file = os.path.join(os.path.dirname( __file__ ),"..","..",
+                                'export/',data+'.npy')
+        sob_data = np.load(file, allow_pickle=True).item()
+        sob_i = sob_data['sobol_indices']
+        prob = sob_data['problem']
+     
+    # Create plot
+    mp.init_plot(scl_a4=2, page_lnewdth_cm=13.7, fnt='Arial', mrksze=4, 
+                 fontsize = 5, labelfontsize=11, tickfontsize=9, 
+                 aspect_ratio=[1, 1])
+    
+    fig, ax = plt.subplots() 
+
+    ax.bar(np.arange(len(sob_i['ST'])), sob_i['ST'], color=mp.green)
+    ax.set_xticks(np.arange(len(sob_i['ST'])))
+    lbls = [r'$\Gamma_{\mathrm{max}}$', '$K$', r'$d_{\mathrm{d}}$']
+    ax.set_xticklabels(lbls)
+ 
+    ax.set_ylabel(r'Total Sobol Index $S_T$')
+
+    ax.grid(axis='y')
+
+    plt.tight_layout()
+    
+    # Generate export strings
+    fig_exp_pth = os.path.join(os.path.dirname( __file__ ),"..","..",
+                               'export/sensitivity'+data+'.pdf')
+    
+    # Export figure
+    plt.savefig(fig_exp_pth)
+    
+    return sob_i
         
 #%%            
 if __name__ == '__main__':
-    plt.close('all')
-    file = '240209_MG_0.2_15-15-15_1.50_90min'
-    data = read_exp(file)
-    exp_names, exp_data = read_folder()
-    param = [np.log10(1.5e-5), 1, 6, 0.025]
-    # param = [0, 0, 13.2, 0.01]
+    OPT = True
+    SENSITIVITY = False
     
-    case = 'all'        # ['all', 'no_f', 'no_e']
-    MP = {'R_max': 10**param[0],
-          'K': param[1],
-          'k_A': param[2],
-          'k_h': param[3]}
-    loss = cost_MP_DOE(param)
-    MP = opt_MP_DOE(param, algo='minimize', case=case)
-    # exp_names, exp_data, sim_data = simulate_DOE(MP_opt)
+    if OPT:
+        exp_names, exp_data = read_folder()
+        
+        plt.close('all')
+        file = '240209_MG_0.2_15-15-15_1.50_90min'
+        data = read_exp(file)
+        exp_names, exp_data = read_folder()
+        param = [np.log10(9.859e-06), 4.641e-05] #Loss: 6.34e-03
+        
+        case = 'all'        # ['all', 'no_f', 'no_e']
+        algo = 'minimize'
+        MP = {'R_max': 10**param[0],
+              'd_d': param[1]}
+        loss = cost_MP_DOE(param)
+        # MP = opt_MP_DOE(param, algo=algo, case=case)
+        # exp_names, exp_data, sim_data = simulate_DOE(MP_opt)
+        
+        # # %%
+        exp_names, exp_data, sim_data = visualize_MP_DOE(MP, case=case, legend=False)
+        data_dict = {'exp_names': exp_names,
+                     'exp_data': exp_data,
+                     'sim_data': sim_data}
+        # %%
+        exp_test = '240425_MG_0.2_10-00-00_1.00'
+        visualize_MP_exp(MP, data=data_dict, name=exp_test, export=True)
+        exp_test = '241114_MG_0.2_30-20-10_1.00_45min'
+        visualize_MP_exp(MP, data=data_dict, name=exp_test, export=True)
+        exp_test = '241223_MG_0.2_1.5-1-1_1.0_V1'
+        visualize_MP_exp(MP, data=data_dict, name=exp_test, export=True)
+        # exp_test = '241223_MG_0.2_00-00-00_1.0_V2'
+        # visualize_MP_exp(MP, data=data_dict, name=exp_test, export=True)
+        exp_test = '240815_MG_0.2_30-20-10_3.00'
+        visualize_MP_exp(MP, data=data_dict, name=exp_test, export=True)
+        exp_test = '240826_MG_0.2_30-20-10_2.00'
+        visualize_MP_exp(MP, data=data_dict, name=exp_test, export=True)
+        
+        # PLT_ALL = False
+        # if PLT_ALL:
+        #     for i in range(len(exp_names)):
+        #         visualize_MP_exp(MP, idx=i, data=data_dict)
     
-    # %%
-    exp_names, exp_data, sim_data = visualize_MP_DOE(MP, case=case)
-    data_dict = {'exp_names': exp_names,
-                 'exp_data': exp_data,
-                 'sim_data': sim_data}
-    # %%
-    exp_test = '240223_MG_0.2_15-15-15_1.50_90min'
-    visualize_MP_exp(MP, data=data_dict, name=exp_test)
-    exp_test = '240425_MG_0.2_10-00-00_1.00'
-    visualize_MP_exp(MP, data=data_dict, name=exp_test)
+        #%%
+        # visualize_corr_h(MP['k_h'])
+        # RMSE = visualize_hist_RMSE(sim_data)
+        # E_F = visualize_hist_E_F(sim_data)
+        RMSE_arr, E_F_arr, vg_arr = visualize_vg_RMSE_EF(sim_data, exp_data, vg_case='sum', 
+                                                         export=True, export_name=case+'_sum_vg')
     
-    PLT_ALL = False
-    if PLT_ALL:
-        for i in range(len(exp_names)):
-            visualize_MP_exp(MP, idx=i, data=data_dict)
     
-    #%%
-    visualize_corr_h(MP['k_h'])
-    RMSE = visualize_hist_RMSE(sim_data)
-    E_F = visualize_hist_E_F(sim_data)
+    if SENSITIVITY:
+        #%% 
+        sob_i = sensitivity_analysis(N_samples=1000)
+        sob_i = visualize_sensitivity(data='sobol_1000')
+        
+        
+    

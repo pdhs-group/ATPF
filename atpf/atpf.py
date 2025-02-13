@@ -41,6 +41,10 @@ class ATPFSolver():
         # Data files
         self.gas_v_d_file = os.path.join(self.pth,'data/gas_correlations/',
                                          'gas_v_d_'+self.inlet_g_medium+'.npy')
+        self.gas_v_h_file = os.path.join(self.pth,'data/gas_correlations/',
+                                         'gas_v_h_mix_multiple.npy')
+        self.gas_v_vf_file = os.path.join(self.pth,'data/gas_correlations/',
+                                          'gas_v_vf_mix.npy')
         
         # Consistency check
         self.check_consistency()
@@ -82,7 +86,7 @@ class ATPFSolver():
                 
         # Compartment volumes [m³]
         # Geometric Parameters
-        self.A = self.A_tot/self.n_comp                        # Interface area comp [m²]
+        self.A = np.ones(self.shape[1])*self.A_tot/self.n_comp # Interface area comp [m²]
         self.v_top = self.v_top_tot/self.n_comp                # Volume of a top comp [m³]
         self.v_bot = self.v_bot_tot/self.n_comp                # Volume of a bot comp [m³]
         
@@ -112,6 +116,14 @@ class ATPFSolver():
         self.P = gas_v_d_data['P']
         self.vg_range = [gas_v_d_data['vg_min'],gas_v_d_data['vg_max']]
         
+        # Load mixing zone height correlation
+        gas_v_h_data = np.load(self.gas_v_h_file,allow_pickle=True).item()
+        self.v_h_mod = gas_v_h_data['mod']
+        
+        # Load mixing zone volume fraction correlation
+        gas_v_vf_data = np.load(self.gas_v_vf_file,allow_pickle=True).item()
+        self.v_vf_mod = gas_v_vf_data['mod']
+        
         # Transfer kappa data into volume ratio and add to dictionary
         self.kappa_data['v'] = self.kappa_to_v(self.kappa_data['kappa'])
         
@@ -140,26 +152,20 @@ class ATPFSolver():
                     # Note: vg[i+1] to account for feed compartment
                     fr[i] = self.fr_from_v(self.vg[i-1],c[1,i],ad_case=self.ad_case)
             
-        # Get currenct correction term for mixing zone height
+        # Get currenct mixing zone height from gas volume flow
         if self.h_case == 'const':
-            h_corr = np.ones(self.vg.shape) 
-        elif self.h_case == 'corr_individ':
-            # h_corr = self.vg/(self.vg+self.k_h)
-            h_corr = 1/(1+np.exp(-self.k_h*(self.vg-30)))
+            h_corr = 1e-3 
         else:
-            vg_sum = np.sum(self.vg)
-            # h_corr = np.ones(self.vg.shape)*vg_sum/(vg_sum+self.k_h)
-            # h_corr = np.ones(self.vg.shape)*(1-np.exp(-self.k_h*vg_sum))
-            h_corr = np.ones(self.vg.shape)/(1+np.exp(-self.k_h*(vg_sum-30)))
+            h_corr = 1e-3*self.v_h_mod.predict(self.vg.reshape(1, -1))
             
-        # Calculate the current effective interface
-        if self.kappa_case == 'const':
-            # Use first entry in kappa_data
-            A_e = self.A*(1+h_corr*self.k_A*6*(1+1/self.kappa_data['v'][0,:])) 
+        # Calculate the current volume fraction in mixing zone
+        if self.vf_case == 'const':
+            vf = 0.01
         else:
-            # Look up corresponding time
-            idx = np.searchsorted(self.kappa_data['t'],t,side='right')-1
-            A_e = self.A*(1+h_corr*self.k_A*6*(1+1/self.kappa_data['v'][idx,:]))
+            vf = self.v_vf_mod.predict(self.vg.reshape(1, -1))
+            
+        # Calculate effective interface area
+        A_e = self.A*(1+h_corr*6/(self.d_d*(1+1/vf)))
         
         # Move through all compartments horizontally (start at 1 to skip feed)
         for i in range(1,self.shape[1]):

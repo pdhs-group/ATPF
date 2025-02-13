@@ -22,7 +22,7 @@ config = {
         'h_bot': 0.097,                      # Height of bot phase [m]
         
         # Process Parameters
-        'vg': [5,5,5],                    # Gas volume flow per compartment [mL/min]
+        'vg': [5,5,5],                       # Gas volume flow per compartment [mL/min]
         'Q_top': 1.67e-6/60,                 # Volume flow top [m³/s]
         'Q_bot': 8.33e-6/60,                 # Volume flow bot [m³/s]
         't_max': 60*60,                      # Process time [s]
@@ -42,13 +42,12 @@ config = {
         'g': 9.81,                           # Gravitational constant [m²/s]
         
         # Diffusion specific parameters
-        'kappa_case':'const',                  # Use experimental conductivity data? ['const','exp']
+        'vf_case':'corr_vg',                 # Correct vf based on vg? ['const','corr_vg']
         # Conductivity data. kappa[i,:]: Conductivity at time t[i]
         'kappa_data':{'t': np.array([0]),              
                       'kappa': np.array([[50,50,50]])},
-        'k_A': 13.2,                            # Height mixing zone h / droplet diameter d [-]
-        'h_case': 'corr_sum',                # Correct h based on vg? ['const','corr_individ','corr_sum']
-        'k_h': 0.01,                          # Correction factor h'=h*vg/(vg+k_h)
+        'd_d': 1e-4,                         # Droplet diameter top in bot d_d [m]
+        'h_case': 'corr_vg',                # Correct h based on vg? ['const','corr_vg']
         'k_i': 8e-5,                         # Mass transport coefficient through interface [m/s]
         'K_p': 16.51,                        # Partition coefficient K_p=c_top/c_bot [-]
         

@@ -13,6 +13,7 @@ import matplotlib
 from scipy.optimize import minimize 
 from scipy.integrate import solve_ivp
 from sklearn.linear_model import LinearRegression
+from sklearn.preprocessing import PolynomialFeatures
 
 from atpf.utils import my_plotter as mp
 from atpf import ATPFSolver
@@ -83,7 +84,326 @@ def regression_bubble(raw_file='data/raw/v_d32_twill.txt', text=True):
     np.save(file_exp_pth,
             {'Model':'d=P[0]*v+P[1]*np.log(v)+P[2]',
              'P':P, 'vg_min':min(v), 'vg_max':max(v)})
+
+# Linear regression for height of mixing zone
+def regression_mixing_height(raw_file='data/raw/raw data_height mixing.csv',
+                             simple=False):
+    # Append full path
+    full_path = os.path.join(os.path.dirname( __file__ ),"..","..", raw_file)
     
+    # Generate export strings
+    fig_exp_pth = os.path.join(os.path.dirname( __file__ ),"..","..",
+                               'data/gas_correlations/gas_v_h_mix')
+    file_exp_pth = os.path.join(os.path.dirname( __file__ ),"..","..",
+                                'data/gas_correlations/gas_v_h_mix')
+    
+    # Import the data from .txt
+    df = pd.read_csv(full_path, delimiter=';', skiprows=1, 
+                     header=None)
+    
+    V = df.iloc[:,:3].astype(float).values
+    h = df.iloc[:,3:6].astype(float).values
+    
+    if simple:
+        # Linear Regression without y intercept
+        m = np.sum(np.sum(V, axis=1)*np.mean(h, axis=1)) / np.sum(np.sum(V, axis=1)**2)
+        c = 0
+                
+        # Calculate R2
+        h_mod = m*np.sum(V, axis=1)
+        
+        SS_res = np.sum((np.mean(h, axis=1) - h_mod) ** 2)
+        SS_tot = np.sum(np.mean(h, axis=1)**2)
+        R2 = 1 - SS_res / SS_tot 
+        
+        # Export model m in [m min / mL]
+        np.save(file_exp_pth + '_simple.npy',
+                {'Model':'h=m*np.sum(v)',
+                 'm':m*1e-3})
+    else:
+        mod = LinearRegression(fit_intercept=True)#, positive=True)
+        mod.fit(V, np.mean(h, axis=1))
+        R2 = mod.score(V, np.mean(h, axis=1))
+        
+        # Calculate model for plot
+        h_mod = mod.predict(V)
+        
+        print(f'R2 = {R2:.3f}')
+        print(f'Model coefficients = {mod.coef_}')
+        print(f'Model intercept = {mod.intercept_}')
+        
+        # Export model 
+        np.save(file_exp_pth + '_multiple.npy',
+                {'Model':'MLR, input [Vg1, Vg2, Vg3] in mL/min, output h in mm',
+                 'mod': mod})
+
+    # Create plot individual compartments
+    mp.init_plot(scl_a4=1, page_lnewdth_cm=13.7, fnt='Arial', mrksze=7, 
+                 fontsize = 11, labelfontsize=11, tickfontsize=9, 
+                 aspect_ratio=[15.99, 6])
+    
+    fig, ax = plt.subplots(1,3) 
+    ax[0].scatter(V[:,0], h[:,0], edgecolor='k', color=mp.green, zorder=3)
+    ax[1].scatter(V[:,1], h[:,1], edgecolor='k', color=mp.green, zorder=3)
+    ax[2].scatter(V[:,2], h[:,2], edgecolor='k', color=mp.green, zorder=3)
+    
+    # Customize axes
+    ax[0].set_xlabel(r'$\dot{V}_{\mathrm{g},1}$ / $\mathrm{mL\,min^{-1}}$')
+    ax[1].set_xlabel(r'$\dot{V}_{\mathrm{g},2}$ / $\mathrm{mL\,min^{-1}}$')
+    ax[2].set_xlabel(r'$\dot{V}_{\mathrm{g},3}$ / $\mathrm{mL\,min^{-1}}$')
+    ax[0].set_ylabel(r'$\overline{h}_{\mathrm{mix},i}$ / $\mathrm{mm}$')
+
+    for a in ax:
+        a.grid(True)
+        a.set_xlim([0,a.get_xlim()[1]])
+        a.set_ylim([0,a.get_ylim()[1]])
+
+    plt.tight_layout()
+    
+    # Create plot integral gas flow rate
+    mp.init_plot(scl_a4=2, page_lnewdth_cm=13.7, fnt='Arial', mrksze=7, 
+                 fontsize = 11, labelfontsize=11, tickfontsize=9, 
+                 aspect_ratio=[1, 1])
+    
+    fig2, ax2 = plt.subplots() 
+    ax2.scatter(np.sum(V, axis=1), np.mean(h, axis=1), edgecolor='k', color=mp.green, zorder=3, label='data')
+    ax2.scatter(np.sum(V, axis=1), h_mod, edgecolor='k', color=mp.red, zorder=1, label='linear fit')
+    
+    # Customize axes
+    ax2.set_xlabel(r'$\sum\dot{V}_{\mathrm{g}}$ / $\mathrm{mL\,min^{-1}}$')
+    ax2.set_ylabel(r'$\overline{h}$ / $\mathrm{m}$')
+    
+    ax2.text(0.98, 0.05, r"$R^2"+f"={R2:.3f}$", 
+            transform=ax2.transAxes, verticalalignment='bottom', 
+            horizontalalignment='right',
+            bbox=dict(boxstyle='round', facecolor='w', alpha=1))
+
+    ax2.grid(True)
+    ax2.set_xlim([0,ax2.get_xlim()[1]])
+    ax2.set_ylim([0,ax2.get_ylim()[1]])
+    ax2.legend()
+
+    plt.tight_layout()
+    
+    # Create parity plot
+    mp.init_plot(scl_a4=2, page_lnewdth_cm=13.7, fnt='Arial', mrksze=7, 
+                 fontsize = 11, labelfontsize=11, tickfontsize=9, 
+                 aspect_ratio=[1, 1])
+    
+    fig3, ax3 = plt.subplots() 
+    ax3.scatter(np.mean(h, axis=1), h_mod, edgecolor='k', color=mp.green, zorder=3, label='data')
+    ax3.plot([0,100],[0,100],color='k',linestyle='-.')
+    
+    # Customize axes
+    ax3.set_xlabel(r'$\overline{h}_{\mathrm{calib}} / \mathrm{mm}$')
+    ax3.set_ylabel(r'$\overline{h}_{\mathrm{mod}} / \mathrm{mm}$')
+    
+    ax3.text(0.98, 0.05, r"$R^2"+f"={R2:.3f}$", 
+            transform=ax3.transAxes, verticalalignment='bottom', 
+            horizontalalignment='right',
+            bbox=dict(boxstyle='round', facecolor='w', alpha=1))
+    
+    ax3.grid(True)
+    ax3.set_xlim([0,20])
+    ax3.set_ylim([0,20])    
+    # ax3.legend()
+    plt.tight_layout()
+    
+    # Report R2
+    print(f'R2 = {R2:.4f}')
+    
+    # Export figure
+    if simple:
+        plt.savefig(fig_exp_pth+'_simple.pdf')
+    else:        
+        plt.savefig(fig_exp_pth+'_multiple.pdf')
+    
+
+# Regression for volume fraction based on gas flow rate
+def regression_v_fraction(raw_file_calib='data/raw/raw data_height mixing.csv', 
+                          raw_file_exp='data/exp_data/0_processed_data.npy',
+                          use_exp=False, poly=False):
+    
+    # Append full path
+    full_path_exp = os.path.join(os.path.dirname( __file__ ),"..","..", raw_file_exp)    
+    full_path_calib = os.path.join(os.path.dirname( __file__ ),"..","..", raw_file_calib)
+    
+    # Generate export strings
+    fig_exp_pth = os.path.join(os.path.dirname( __file__ ),"..","..",
+                               'data/gas_correlations/gas_v_vf_mix.pdf')
+    file_exp_pth = os.path.join(os.path.dirname( __file__ ),"..","..",
+                                'data/gas_correlations/gas_v_vf_mix.npy')
+    
+    data = np.load(full_path_exp, allow_pickle=True).item()
+    
+    exp_names = data['exp_names']
+    exp_data = data['exp_data']
+    
+    # Initialize arrays
+    V_exp = np.zeros((len(data['exp_names']),3))
+    k_exp = np.zeros((len(data['exp_names']),3))
+    
+    # Fill arrays
+    for e in range(len(data['exp_names'])):
+        num_t = exp_data[e]['kappa'].shape[0]
+        idx = int(num_t/2)
+        
+        V_exp[e,:] = exp_data[e]['vg']
+        k_exp[e,:] = np.mean(exp_data[e]['kappa'][idx:,:], axis=0)
+    
+    v_exp = -0.0146*k_exp+0.767   
+    
+    # Import the data from .txt
+    df = pd.read_csv(full_path_calib, delimiter=';', skiprows=1, 
+                     header=None)
+    
+    V_calib = df.iloc[:,:3].astype(float).values
+    k_calib = df.iloc[:,6:].astype(float).values
+    v_calib = -0.0146*k_calib+0.767
+        
+    if use_exp:
+        V = V_exp
+        k = k_exp
+        v = v_exp
+    else:
+        V = V_calib
+        k = k_calib
+        v = v_calib
+        
+    V_sum = np.sum(V, axis=1)
+    k_mean = np.mean(k, axis=1)
+    v_mean = np.mean(v, axis=1)
+    
+    # Linear Regression 
+    if poly:
+        poly = PolynomialFeatures(2, interaction_only=True)
+        V = poly.fit_transform(V)
+        V_exp = poly.transform(V_exp)
+        
+    mod = LinearRegression(fit_intercept=True)#, positive=True)
+    mod.fit(V, v_mean)
+    R2 = mod.score(V, v_mean)
+    
+    # Calculate model for plot
+    v_mod = mod.predict(V)
+    v_mod_exp = mod.predict(V_exp)
+    RMSE_exp = np.sqrt(np.mean((np.mean(v_exp, axis=1)-v_mod_exp)**2))
+    
+    # Create plot individual compartments
+    mp.init_plot(scl_a4=1, page_lnewdth_cm=13.7, fnt='Arial', mrksze=7, 
+                 fontsize = 11, labelfontsize=11, tickfontsize=9, 
+                 aspect_ratio=[15.99, 6])
+    
+    fig, ax = plt.subplots(1,3) 
+    ax[0].scatter(V[:,0], k[:,0], edgecolor='k', color=mp.green, zorder=3)
+    ax[1].scatter(V[:,1], k[:,1], edgecolor='k', color=mp.green, zorder=3)
+    ax[2].scatter(V[:,2], k[:,2], edgecolor='k', color=mp.green, zorder=3)
+    
+    # Customize axes
+    ax[0].set_xlabel(r'$\dot{V}_{\mathrm{g},1}$ / $\mathrm{mL\,min^{-1}}$')
+    ax[1].set_xlabel(r'$\dot{V}_{\mathrm{g},2}$ / $\mathrm{mL\,min^{-1}}$')
+    ax[2].set_xlabel(r'$\dot{V}_{\mathrm{g},3}$ / $\mathrm{mL\,min^{-1}}$')
+    ax[0].set_ylabel(r'$\overline{\kappa}_i$ / $\mathrm{mS}$')
+
+    for a in ax:
+        a.grid(True)
+        a.set_xlim([0,40])
+        # a.set_xlim([0,a.get_xlim()[1]])
+        # a.set_ylim([0,a.get_ylim()[1]])
+
+    plt.tight_layout()
+    
+    # Create plot integral gas flow rate
+    mp.init_plot(scl_a4=2, page_lnewdth_cm=13.7, fnt='Arial', mrksze=7, 
+                 fontsize = 11, labelfontsize=11, tickfontsize=9, 
+                 aspect_ratio=[1, 1])
+    
+    fig2, ax2 = plt.subplots() 
+    ax2.scatter(V_sum, v_mean, edgecolor='k', color=mp.green, zorder=3, label='data')
+    ax2.scatter(V_sum, v_mod, edgecolor='k', color=mp.red, zorder=3, label='model')
+    # ax2.plot(V_mod, h_mod, color='k', zorder=1, label='linear fit')
+    
+    # Customize axes
+    ax2.set_xlabel(r'$\sum\dot{V}_{\mathrm{g}}$ / $\mathrm{mL\,min^{-1}}$')
+    ax2.set_ylabel(r'$\overline{v}$')
+    
+    # ax2.text(0.98, 0.05, r"$R^2"+f"={R2:.3f}$", 
+    #         transform=ax2.transAxes, verticalalignment='bottom', 
+    #         horizontalalignment='right',
+    #         bbox=dict(boxstyle='round', facecolor='w', alpha=1))
+
+    ax2.grid(True)
+    # ax2.set_xlim([0,ax2.get_xlim()[1]])
+    # ax2.set_ylim([0,ax2.get_ylim()[1]])
+    ax2.legend()
+
+    plt.tight_layout()
+    
+    # Create parity plot
+    mp.init_plot(scl_a4=2, page_lnewdth_cm=13.7, fnt='Arial', mrksze=7, 
+                 fontsize = 11, labelfontsize=11, tickfontsize=9, 
+                 aspect_ratio=[1, 1])
+    
+    fig3, ax3 = plt.subplots() 
+    ax3.scatter(v_mean, v_mod, edgecolor='k', color=mp.green, zorder=3, label='data')
+    ax3.plot([0,1],[0,1],color='k',linestyle='-.')
+    # ax3.plot(V_mod, h_mod, color='k', zorder=1, label='linear fit')
+    
+    # Customize axes
+    ax3.set_xlabel(r'$\overline{v}_{\mathrm{calib}}$')
+    ax3.set_ylabel(r'$\overline{v}_{\mathrm{mod}}$')
+    
+    ax3.text(0.98, 0.05, r"$R^2"+f"={R2:.3f}$", 
+            transform=ax3.transAxes, verticalalignment='bottom', 
+            horizontalalignment='right',
+            bbox=dict(boxstyle='round', facecolor='w', alpha=1))
+
+    ax3.grid(True)
+    ax3.set_xlim([0,0.3])
+    ax3.set_ylim([0,0.3])    
+    # ax3.legend()
+    plt.tight_layout()
+    
+    # Export figure
+    plt.savefig(fig_exp_pth)
+    
+    # Create parity plot for experimental data
+    mp.init_plot(scl_a4=2, page_lnewdth_cm=13.7, fnt='Arial', mrksze=7, 
+                 fontsize = 11, labelfontsize=11, tickfontsize=9, 
+                 aspect_ratio=[1, 1])
+    
+    fig4, ax4 = plt.subplots() 
+    ax4.scatter(np.mean(v_exp, axis=1), v_mod_exp, edgecolor='k', color=mp.green, zorder=3, label='data')
+    ax4.plot([0,1],[0,1],color='k',linestyle='-.')
+    # ax4.plot(V_mod, h_mod, color='k', zorder=1, label='linear fit')
+    
+    # Customize axes
+    ax4.set_xlabel(r'$\overline{v}_{\mathrm{exp}}$')
+    ax4.set_ylabel(r'$\overline{v}_{\mathrm{mod, exp}}$')
+    
+    # ax4.text(0.98, 0.05, r"$R^2"+f"={R2:.3f}$", 
+    #         transform=ax4.transAxes, verticalalignment='bottom', 
+    #         horizontalalignment='right',
+    #         bbox=dict(boxstyle='round', facecolor='w', alpha=1))
+    
+    ax4.grid(True)
+    ax4.set_xlim([0,0.3])
+    ax4.set_ylim([0,0.3])    
+    # ax4.legend()
+    plt.tight_layout()
+    
+    print(f'R2 = {R2:.3f}')
+    print(f'Model coefficients = {mod.coef_}')
+    print(f'Model intercept = {mod.intercept_}')
+    print(f'RMSE on experimental data = {RMSE_exp:.3f}')
+    
+    # Export model 
+    np.save(file_exp_pth,
+            {'Model':'MLR, input [Vg1, Vg2, Vg3] in mL/min, output v in -',
+             'mod': mod})
+      
+    return V, k, mod
+
 # Cost function for bubble regression:
 def cost_bubble(P,v_exp,d_exp):
     a = P[0]
@@ -155,9 +475,14 @@ if __name__ == '__main__':
     
     # Regression for twill and metal
     # regression_bubble(raw_file='data/raw/v_d32_glass.txt')
-    regression_bubble(raw_file='data/raw/v_d32_twill.txt', text=False)
+    # regression_bubble(raw_file='data/raw/v_d32_twill.txt', text=False)
     # regression_bubble(raw_file='data/raw/v_d32_metal.txt')
     
+    # Regression for height of mixing zone
+    regression_mixing_height(simple=False)
+    
+    # Regression conductivity
+    V, k, mod = regression_v_fraction(poly=False)
 
     
     

@@ -42,13 +42,12 @@ config = {
         'g': 9.81,                           # Gravitational constant [m²/s]
         
         # Diffusion specific parameters
-        'kappa_case':'exp',                  # Use experimental conductivity data? ['const','exp']
+        'vf_case':'corr_vg',                 # Correct vf based on vg? ['const','corr_vg']
         # Conductivity data. kappa[i,:]: Conductivity at time t[i]
         'kappa_data':{'t': np.array([0]),              
                       'kappa': np.array([[50,50,50]])},
-        'k_A': 1,                            # Height mixing zone h / droplet diameter d [-]
-        'h_case': 'corr_sum',                # Correct h based on vg? ['const','corr_individ','corr_sum']
-        'k_h': 0.1,                          # Correction factor h'=h*vg/(vg+k_h)
+        'd_d': 1e-4,                         # Droplet diameter top in bot d_d [m]
+        'h_case': 'corr_vg',                # Correct h based on vg? ['const','corr_vg']
         'k_i': 8e-5,                         # Mass transport coefficient through interface [m/s]
         'K_p': 16.51,                        # Partition coefficient K_p=c_top/c_bot [-]
         
