@@ -89,7 +89,8 @@ def read_folder(path='data/exp_data', save=True):
     
     return exp_names, exp_data
 
-def simulate_DOE(MP, case='all', path='data/exp_data', cf_file='exp_data_study_config.py', verbose=1):
+def simulate_DOE(MP, case='all', path='data/exp_data', cf_file='exp_data_study_config.py', 
+                 verbose=1, sensitivity=False):
     # Import processed data
     full_path = os.path.join(os.path.dirname( __file__ ),"..","..", path)
     cf_path = os.path.join(os.path.dirname( __file__ ),"..","..", 'config')
@@ -121,6 +122,8 @@ def simulate_DOE(MP, case='all', path='data/exp_data', cf_file='exp_data_study_c
         # Set model parameters provided by MP
         a.R_max = MP['R_max']
         a.d_d = MP['d_d']
+        if sensitivity:
+            a.K = MP['K']
         
         # If a certain effect is neglected make adjustments here
         if case == 'no_f':
@@ -211,7 +214,9 @@ def opt_MP_DOE(param0, algo='minimize', crit='RMSE_full', case='all', path='data
     
     return MP_opt
     
-def cost_MP_DOE(param, crit='RMSE_full', case='all', path='data/exp_data', cf_file='exp_data_study_config.py', verbose=1):
+def cost_MP_DOE(param, crit='RMSE_full', case='all', path='data/exp_data', 
+                cf_file='exp_data_study_config.py', verbose=1,
+                sensitivity=False):
     ### param is a list containing all parameters that require optimization
     ## param[0]: log10(R_max)
     ## param[1]: d_d
@@ -220,9 +225,18 @@ def cost_MP_DOE(param, crit='RMSE_full', case='all', path='data/exp_data', cf_fi
     
     MP = {'R_max': 10**param[0],
           'd_d': param[1]}
-        
+    
+    # In case of sensitivity analysis use all three possible model parameters
+    if sensitivity:
+        K = param[1]
+        d_d = param[2]
+        MP = {'R_max': 10**param[0],
+              'K': param[1],
+              'd_d': param[2]}
+            
     # Simulate DOE for current MP
-    exp_names, exp_data, sim_data = simulate_DOE(MP, case, path=path, cf_file=cf_file, verbose=0)
+    exp_names, exp_data, sim_data = simulate_DOE(MP, case, path=path, cf_file=cf_file, 
+                                                 verbose=0, sensitivity=sensitivity)
 
     # Calculate loss criterion
     loss = 0
@@ -232,7 +246,10 @@ def cost_MP_DOE(param, crit='RMSE_full', case='all', path='data/exp_data', cf_fi
             loss += np.sqrt(np.mean((sim_data[i]['w02_exp']-sim_data[i]['w02_mod'])**2))/len(exp_names)
     
     if verbose > 0:
-        print(f'Current MP: {R_max:.2e} | {d_d:.3e} || Loss: {loss:.2e}')
+        if sensitivity:
+            print(f'Current MP: {R_max:.2e} | {K:.3e} | {d_d:.3e} || Loss: {loss:.2e}')  
+        else:
+            print(f'Current MP: {R_max:.2e} | {d_d:.3e} || Loss: {loss:.2e}')
             
     return loss
 
@@ -251,7 +268,8 @@ def sensitivity_analysis(N_samples=1000, second_order=True,
     # param_values[:,3] = 10**param_values[:,3]
     Y = np.zeros(param_values.shape[0])
     for i in range(param_values.shape[0]):
-        Y[i] = cost_MP_DOE(param_values[i,:], case=case, path=path, cf_file=cf_file, verbose=1)
+        Y[i] = cost_MP_DOE(param_values[i,:], case=case, path=path, cf_file=cf_file, 
+                           verbose=1, sensitivity=True)
     sobol_indices = sobol.analyze(problem, Y, calc_second_order=second_order)
     
     exp_pth = os.path.join(os.path.dirname( __file__ ),"..","..",
@@ -563,8 +581,8 @@ def visualize_sensitivity(sob_i=None, data='sobol_10', export=False):
         
 #%%            
 if __name__ == '__main__':
-    OPT = True
-    SENSITIVITY = False
+    OPT = False
+    SENSITIVITY = True
     
     if OPT:
         exp_names, exp_data = read_folder()
@@ -617,8 +635,8 @@ if __name__ == '__main__':
     
     if SENSITIVITY:
         #%% 
-        sob_i = sensitivity_analysis(N_samples=1000)
-        sob_i = visualize_sensitivity(data='sobol_1000')
+        sob_i = sensitivity_analysis(N_samples=1024)
+        # sob_i = visualize_sensitivity(data='sobol_1000')
         
         
     
