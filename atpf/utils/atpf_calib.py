@@ -21,6 +21,7 @@ mp.init_plot(scl_a4=1, page_lnewdth_cm=13.7, fnt='Latin Modern Roman', mrksze=7,
              fontsize = 11, labelfontsize=11, tickfontsize=9, 
              aspect_ratio=[13.7, 6])
 
+# Read a single experiment
 def read_exp(filename, path='data/exp_data'):
     full_path = os.path.join(os.path.dirname( __file__ ),"..","..", path, filename)
     
@@ -55,6 +56,7 @@ def read_exp(filename, path='data/exp_data'):
         
         return exp_data
 
+# Read an experimental folder
 def read_folder(path='data/exp_data', save=True):
     full_path = os.path.join(os.path.dirname( __file__ ),"..","..", path)
     all_files = os.listdir(full_path)
@@ -89,6 +91,7 @@ def read_folder(path='data/exp_data', save=True):
     
     return exp_names, exp_data
 
+# Simulate a full experimental design
 def simulate_DOE(MP, case='all', path='data/exp_data', cf_file='exp_data_study_config.py', 
                  verbose=1, sensitivity=False):
     # Import processed data
@@ -159,6 +162,7 @@ def simulate_DOE(MP, case='all', path='data/exp_data', cf_file='exp_data_study_c
     
     return exp_names, exp_data, sim_data
 
+# Optimize model parameters to experimental data
 def opt_MP_DOE(param0, algo='minimize', crit='RMSE_full', case='all', path='data/exp_data', 
                cf_file='exp_data_study_config.py', bounds=None, verbose=1):
     
@@ -171,6 +175,7 @@ def opt_MP_DOE(param0, algo='minimize', crit='RMSE_full', case='all', path='data
         elif case == 'no_e':
             print('No extraction transport')
     
+    # Set bounds of specific parameter equal -> Optimizer knows that this parameter is irrelevant
     if bounds is None:
         if case == 'no_f':
             bounds = ((param0[0],param0[0]),(1e-6,1e-3))
@@ -181,6 +186,7 @@ def opt_MP_DOE(param0, algo='minimize', crit='RMSE_full', case='all', path='data
 
         
     if algo == 'minimize':
+        print('Using scipy.minimize( )')   
         opt_res = minimize(cost_MP_DOE, param0, method='Nelder-Mead', 
                            args=(crit, case, path, cf_file, 1), #tol=1e-6,
                            bounds=bounds, 
@@ -188,12 +194,14 @@ def opt_MP_DOE(param0, algo='minimize', crit='RMSE_full', case='all', path='data
         sol = opt_res.x
 
     elif algo == 'evo':
-        opt_res = differential_evolution(cost_MP_DOE, bounds, maxiter=200, popsize=10,
+        print('Using scipy.differential_evolution( )')  
+        opt_res = differential_evolution(cost_MP_DOE, bounds, maxiter=20, popsize=4,
                                          seed = 1, disp=True, polish=True, init='sobol',
                                          args=(crit, case, path, cf_file, 1))
         sol = opt_res.x
         
-    elif algo == 'brute':
+    elif algo == 'brute':        
+        print('Using scipy.brute( )')  
         opt_res = brute(cost_MP_DOE, ranges=bounds,
                         args=(crit, case, path, cf_file, 1), Ns=5)
         sol = opt_res.x0
@@ -213,10 +221,12 @@ def opt_MP_DOE(param0, algo='minimize', crit='RMSE_full', case='all', path='data
     np.save(exp_pth, MP_opt)
     
     return MP_opt
-    
+
+# Cost function used during optimization    
 def cost_MP_DOE(param, crit='RMSE_full', case='all', path='data/exp_data', 
                 cf_file='exp_data_study_config.py', verbose=1,
                 sensitivity=False):
+    
     ### param is a list containing all parameters that require optimization
     ## param[0]: log10(R_max)
     ## param[1]: d_d
@@ -253,6 +263,7 @@ def cost_MP_DOE(param, crit='RMSE_full', case='all', path='data/exp_data',
             
     return loss
 
+# Sobol sensitivity analysis
 def sensitivity_analysis(N_samples=1000, second_order=True, 
                          case='all', path='data/exp_data', cf_file='exp_data_study_config.py'):
     problem = {
@@ -411,20 +422,6 @@ def visualize_vg_RMSE_EF(sim_data, exp_data, vg_case='sum', sort='vg',
         vg_arr = np.array([max(exp_data[i]['vg']) for i in range(len(exp_data))])
     N = np.arange(len(RMSE_arr))
     
-    # if sort == 'vg':
-    #     idx = np.argsort(vg_arr)
-    # elif sort == 'RMSE':
-    #     idx = np.argsort(RMSE_arr)
-    # else:
-    #     idx = np.argsort(E_F_arr)
-    
-    # # Re-Sort
-    # vg_arr = vg_arr[idx]
-    # RMSE_arr = RMSE_arr[idx]
-    # E_F_arr = E_F_arr[idx]
-    
-    # bw = 0.25
-        
     # Linear approximations
     vg_cont = np.linspace(min(vg_arr), max(vg_arr),100)
     c_RMSE = np.polyfit(vg_arr, RMSE_arr, 1)
@@ -435,9 +432,7 @@ def visualize_vg_RMSE_EF(sim_data, exp_data, vg_case='sum', sort='vg',
     # Plot
     fig, ax1 = plt.subplots()  
     ax2 = ax1.twinx() 
-    # ax.bar(N-1.5*bw, vg_arr/max(vg_arr), width=bw)     
-    # ax.bar(N, RMSE_arr/max(RMSE_arr), width=bw)
-    # ax.bar(N+1.5*bw, E_F_arr/max(E_F_arr), width=bw)
+
     ax1.scatter(vg_arr, RMSE_arr, edgecolor='k', color=mp.green, 
                marker='s', zorder=2, label=r'RMSE')
     ax2.scatter(vg_arr, E_F_arr, edgecolor='k', color=mp.red, 
@@ -519,28 +514,6 @@ def visualize_hist_E_F(sim_data, export=False):
     
     return E_F_arr
 
-def visualize_corr_h(k_h):
-    
-    # Generate data
-    vg = np.linspace(1,100,1000)
-    # k = 1+vg/(vg+k_h)
-    k = 1-np.exp(-k_h*vg)
-    # k = 1/(1+np.exp(-k_h*(vg-30)))
-    
-    # Initialize
-    mp.init_plot(scl_a4=1, page_lnewdth_cm=13.7, fnt='Arial', mrksze=4, 
-                 fontsize = 11, labelfontsize=11, tickfontsize=9, 
-                 aspect_ratio=[13.7, 13.7/2])
-    
-    # Plot
-    fig, ax = plt.subplots()     
-    ax.plot(vg, k, marker='s', color=mp.green, mec='k')
-
-    # Customize axes
-    ax.set_xlabel(r'$\sum \dot{V}_g$ / $\mathrm{mL\,min^{-1}}$')
-    ax.set_ylabel('$k*$ / $-$')
-    ax.grid(True)
-    plt.tight_layout()  
 
 def visualize_sensitivity(sob_i=None, data='sobol_10', export=False):
     
@@ -578,65 +551,87 @@ def visualize_sensitivity(sob_i=None, data='sobol_10', export=False):
     plt.savefig(fig_exp_pth)
     
     return sob_i
-        
-#%%            
-if __name__ == '__main__':
-    OPT = False
-    SENSITIVITY = True
+
+# Generate run table for latex
+def generate_run_table():
+    no = 1 
+    rt = ''
     
-    if OPT:
-        exp_names, exp_data = read_folder()
-        
+    # Read experimental folder
+    exp_names, exp_data = read_folder()
+    
+    for d in exp_data:
+        rt += str(no) + '&' + str(d['w0_bot']*100) + '&' + str(max(d['t'])/60) + '&' + f"{d['Q_bot']*1e6*60:.2f}" + '&' + f"{d['Q_top']*1e6*60:.2f}" + '&'
+        rt += str(d['vg'][0]) + '&' + str(d['vg'][1]) + '&' + str(d['vg'][2]) + '\\\\' + r' \hline' + '\n' 
+        no += 1
+    return rt
+    
+#%% MAIN           
+if __name__ == '__main__':
+    OPT = False                      # Set to true to optimize model parameters to experiments
+    SENSITIVITY = False              # Set to true to perform sensitivity analysis
+    READ_EXP = True                 # Only read experiments
+    
+    if OPT:        
         plt.close('all')
-        file = '240209_MG_0.2_15-15-15_1.50_90min'
-        data = read_exp(file)
-        exp_names, exp_data = read_folder()
-        param = [np.log10(9.859e-06), 4.641e-05] #Loss: 6.34e-03
         
+        # Usage example: Reading a single experiment
+        # file = '240209_MG_0.2_15-15-15_1.50_90min'
+        # data = read_exp(file)
+        
+        # Read all experimental data
+        exp_names, exp_data = read_folder()
+        
+        # Define initial guess for optimization procedure
+        param = [np.log10(1e-5), 1e-5] 
+        
+        # Define case
+        ## 'all': flotation and extraction (case I)
+        ## 'no_f': no flotation (case II)
+        ## 'no_e': no extraction (case III)
         case = 'all'        # ['all', 'no_f', 'no_e']
-        algo = 'minimize'
+        
+        # Define optimization algorithm
+        ## 'minimize': scipy.minimize
+        ## 'evo': genetic algorithm
+        ## 'brute': grid search
+        algo = 'evo'
         MP = {'R_max': 10**param[0],
               'd_d': param[1]}
-        loss = cost_MP_DOE(param)
-        # MP = opt_MP_DOE(param, algo=algo, case=case)
-        # exp_names, exp_data, sim_data = simulate_DOE(MP_opt)
+        #loss = cost_MP_DOE(param)
         
-        # # %%
-        exp_names, exp_data, sim_data = visualize_MP_DOE(MP, case=case, legend=False)
+        # Call optimizer
+        MP_opt = opt_MP_DOE(param, algo=algo, case=case)
+        #exp_names, exp_data, sim_data = simulate_DOE(MP_opt)
+        
+        # Visualize results
+        exp_names, exp_data, sim_data = visualize_MP_DOE(MP_opt, case=case, legend=False)
         data_dict = {'exp_names': exp_names,
                      'exp_data': exp_data,
                      'sim_data': sim_data}
-        # %%
+
         exp_test = '240425_MG_0.2_10-00-00_1.00'
         visualize_MP_exp(MP, data=data_dict, name=exp_test, export=True)
         exp_test = '241114_MG_0.2_30-20-10_1.00_45min'
         visualize_MP_exp(MP, data=data_dict, name=exp_test, export=True)
         exp_test = '241223_MG_0.2_1.5-1-1_1.0_V1'
         visualize_MP_exp(MP, data=data_dict, name=exp_test, export=True)
-        # exp_test = '241223_MG_0.2_00-00-00_1.0_V2'
-        # visualize_MP_exp(MP, data=data_dict, name=exp_test, export=True)
         exp_test = '240815_MG_0.2_30-20-10_3.00'
         visualize_MP_exp(MP, data=data_dict, name=exp_test, export=True)
         exp_test = '240826_MG_0.2_30-20-10_2.00'
         visualize_MP_exp(MP, data=data_dict, name=exp_test, export=True)
         
-        # PLT_ALL = False
-        # if PLT_ALL:
-        #     for i in range(len(exp_names)):
-        #         visualize_MP_exp(MP, idx=i, data=data_dict)
-    
-        #%%
-        # visualize_corr_h(MP['k_h'])
-        # RMSE = visualize_hist_RMSE(sim_data)
-        # E_F = visualize_hist_E_F(sim_data)
         RMSE_arr, E_F_arr, vg_arr = visualize_vg_RMSE_EF(sim_data, exp_data, vg_case='sum', 
                                                          export=True, export_name=case+'_sum_vg')
     
-    
     if SENSITIVITY:
-        #%% 
-        sob_i = sensitivity_analysis(N_samples=1024)
-        # sob_i = visualize_sensitivity(data='sobol_1000')
+        # Perform sensitivity analysis
+        # sob_i = sensitivity_analysis(N_samples=1024)
+        sob_i = sensitivity_analysis(N_samples=8)
+        
+    if READ_EXP:
+        exp_names, exp_data = read_folder()
+        rt = generate_run_table()
         
         
     

@@ -47,7 +47,7 @@ config = {
         'kappa_data':{'t': np.array([0]),              
                       'kappa': np.array([[50,50,50]])},
         'd_d': 1e-4,                         # Droplet diameter top in bot d_d [m]
-        'h_case': 'corr_vg',                # Correct h based on vg? ['const','corr_vg']
+        'h_case': 'corr_vg',                 # Correct h based on vg? ['const','corr_vg']
         'k_i': 8e-5,                         # Mass transport coefficient through interface [m/s]
         'K_p': 16.51,                        # Partition coefficient K_p=c_top/c_bot [-]
         
@@ -55,5 +55,5 @@ config = {
         'k_a': 2e-1,                         # Adsorption rate [m³/mol s]
         'k_d': 1e-2,                         # Desorption rate [1/s]
         'K': 20,                             # Steady state Langmuir constant [m³/mol]
-        'R_max': 0,                       # Maximum surface loading [mol/m²]
+        'R_max': 0,                          # Maximum surface loading [mol/m²]
 }

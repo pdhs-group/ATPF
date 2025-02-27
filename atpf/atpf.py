@@ -12,6 +12,7 @@ import importlib
 import pandas as pd
 from scipy.integrate import solve_ivp
 
+# ATPF class 
 class ATPFSolver():
     
     def __init__(self, cf_file=None, cf_pth=None, verbose=1):
@@ -22,6 +23,7 @@ class ATPFSolver():
         if cf_pth is None:
             cf_pth = os.path.join('..','config')
         
+        # Load config dictionary from .py file
         cf_abs_pth = os.path.join(cf_pth, cf_file)
         spec = importlib.util.spec_from_file_location(os.path.splitext(cf_file)[0], cf_abs_pth)
         cf_module = importlib.util.module_from_spec(spec)
@@ -69,6 +71,11 @@ class ATPFSolver():
         
         if not self.inlet_g_medium in ['glass','metal','twill']:
             raise ValueError("(!) Select correct gas inlet medium. Valid options are ['glass','metal','twill']")
+        
+        if self.n_comp != 3 and (self.vf_case !='const' or self.h_case != 'const'):
+            print('Note: No correlation for batch experiments is available. Using vf_case=const and h_case=const')
+            self.vf_case = 'const'
+            self.h_case = 'const'
             
     # Initial calculations
     def init_calc(self):
@@ -155,6 +162,9 @@ class ATPFSolver():
         # Get currenct mixing zone height from gas volume flow
         if self.h_case == 'const':
             h_corr = 1e-3 
+        elif len(self.vg) == 1:
+            h_corr = 1e-3 
+            print('Note: No correlation for batch experiments is available. Using h_case=const')
         else:
             h_corr = 1e-3*self.v_h_mod.predict(self.vg.reshape(1, -1))
             
@@ -310,22 +320,6 @@ class ATPFSolver():
             return c*self.M_enz/self.rho_bot
         else:
             return c*self.M_enz/self.rho_top
-
-        
-# Adsorption kintetic DYNAMIC c:
-# Note: This should be integrated directly in fr_from_v to account for dcdt
-# def adsorption_kinetik_complex(t,y,k_a,k_d,R_max,A,V):
-#     # t in s
-#     # k_a in mol/m³s
-#     # k_d in 1/s
-#     # R_max in mol/m2
-#     # A in m²
-#     # V in m³
-#     c = y[0]    # Bulk concentration
-#     R = y[1]    # Surface loading
-#     dRdt = k_a*c*(R_max-R)-k_d*R
-#     dcdt = -dRdt*A/V
-#     return [dcdt,dRdt]
 
 # Adsorption kintetic CONSTANT c:
 def adsorption_kinetik(t,R,k_a,k_d,R_max,c):

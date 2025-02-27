@@ -475,7 +475,7 @@ if __name__ == '__main__':
     
     # Regression for twill and metal
     # regression_bubble(raw_file='data/raw/v_d32_glass.txt')
-    # regression_bubble(raw_file='data/raw/v_d32_twill.txt', text=False)
+    regression_bubble(raw_file='data/raw/v_d32_twill.txt', text=False)
     # regression_bubble(raw_file='data/raw/v_d32_metal.txt')
     
     # Regression for height of mixing zone
