@@ -93,7 +93,7 @@ def read_folder(path='data/exp_data', save=True):
 
 # Simulate a full experimental design
 def simulate_DOE(MP, case='all', path='data/exp_data', cf_file='exp_data_study_config.py', 
-                 verbose=1, sensitivity=False):
+                 verbose=1):
     # Import processed data
     full_path = os.path.join(os.path.dirname( __file__ ),"..","..", path)
     cf_path = os.path.join(os.path.dirname( __file__ ),"..","..", 'config')
@@ -125,7 +125,8 @@ def simulate_DOE(MP, case='all', path='data/exp_data', cf_file='exp_data_study_c
         # Set model parameters provided by MP
         a.R_max = MP['R_max']
         a.d_d = MP['d_d']
-        if sensitivity:
+        # If K ist kept variable MP has three keys
+        if len(MP)>=3:
             a.K = MP['K']
         
         # If a certain effect is neglected make adjustments here
@@ -149,8 +150,9 @@ def simulate_DOE(MP, case='all', path='data/exp_data', cf_file='exp_data_study_c
         M_e_int = a.M_e_int
         M_f_int = a.M_f_int
         
-        # Calculate RMSE for this experiment
+        # Calculate RMSE and relative error for this experiment
         RMSE = np.sqrt(np.mean((w02_mod-w02_exp)**2))
+        RE = np.mean(np.abs((w02_mod[w02_exp!=0]-w02_exp[w02_exp!=0])/w02_exp[w02_exp!=0]))
         
         # Append data as dict into sim_data
         sim_data.append({'t': t,
@@ -158,7 +160,8 @@ def simulate_DOE(MP, case='all', path='data/exp_data', cf_file='exp_data_study_c
                          'w02_exp': w02_exp,
                          'M_e_int': M_e_int,
                          'M_f_int': M_f_int,                         
-                         'RMSE': RMSE})
+                         'RMSE': RMSE,
+                         'RE': RE})
     
     return exp_names, exp_data, sim_data
 
@@ -166,6 +169,11 @@ def simulate_DOE(MP, case='all', path='data/exp_data', cf_file='exp_data_study_c
 def opt_MP_DOE(param0, algo='minimize', crit='RMSE_full', case='all', path='data/exp_data', 
                cf_file='exp_data_study_config.py', bounds=None, verbose=1):
     
+    # If three optimization parameters are passed, also optimize for K
+    K_var = False
+    if len(param0) >= 3:
+        K_var = True
+        
     if verbose > 0:
         print('Starting model parameter optimization..')
         if case == 'all':
@@ -174,17 +182,25 @@ def opt_MP_DOE(param0, algo='minimize', crit='RMSE_full', case='all', path='data
             print('No flotation transport')
         elif case == 'no_e':
             print('No extraction transport')
+        if K_var:
+            print('Optimizing for Gamma_max, d_d AND K')
+        else:            
+            print('Optimizing for Gamma_max and d_d')
     
     # Set bounds of specific parameter equal -> Optimizer knows that this parameter is irrelevant
     if bounds is None:
         if case == 'no_f':
-            bounds = ((param0[0],param0[0]),(1e-6,1e-3))
+            bounds = ((param0[0],param0[0]),(-6,-4))
         elif case == 'no_e':
-            bounds = ((-7,-3),(param0[1],param0[1]))
+            bounds = ((-7,-4),(param0[1],param0[1]))
         else:
-            bounds = ((-7,-3),(1e-6,1e-3))        
+            bounds = ((-7,-4),(-6,-4))    
+        if K_var:
+            if case == 'no_f':
+                bounds += ((param0[2],param0[2]),)
+            else:
+                bounds += ((0,2),)        
 
-        
     if algo == 'minimize':
         print('Using scipy.minimize( )')   
         opt_res = minimize(cost_MP_DOE, param0, method='Nelder-Mead', 
@@ -208,13 +224,18 @@ def opt_MP_DOE(param0, algo='minimize', crit='RMSE_full', case='all', path='data
         
     else:
         raise ValueError('Provide correct optimization algorithm')
-        
-            
+                    
     MP_opt = {'R_max': 10**sol[0],
-              'd_d': sol[1]}
+              'd_d': 10**sol[1]}
+    
+    if K_var:
+        MP_opt['K'] = 10**sol[2]
 
     print('#####################')
-    print(f'The optimized model parameters are {10**sol[0]:.3e} | {sol[1]:.3e}')
+    if K_var:
+        print(f'The optimized model parameters are {10**sol[0]:.3e} | {10**sol[1]:.3e} | {10**sol[2]:.3e}')
+    else:
+        print(f'The optimized model parameters are {10**sol[0]:.3e} | {10**sol[1]:.3e}')
     
     exp_pth = os.path.join(os.path.dirname( __file__ ),"..","..",
                            'export/opt_'+algo+'_'+case+'.npy')
@@ -224,29 +245,31 @@ def opt_MP_DOE(param0, algo='minimize', crit='RMSE_full', case='all', path='data
 
 # Cost function used during optimization    
 def cost_MP_DOE(param, crit='RMSE_full', case='all', path='data/exp_data', 
-                cf_file='exp_data_study_config.py', verbose=1,
-                sensitivity=False):
+                cf_file='exp_data_study_config.py', verbose=1):
     
+    # If three optimization parameters are passed, also optimize for K
+    K_var = False
+    if len(param) >= 3:
+        K_var = True
+        
     ### param is a list containing all parameters that require optimization
     ## param[0]: log10(R_max)
     ## param[1]: d_d
+    ## param[2] (OPTIONAL): K
     R_max = 10**param[0]
-    d_d = param[1]
+    d_d = 10**param[1]
     
-    MP = {'R_max': 10**param[0],
-          'd_d': param[1]}
+    MP = {'R_max': R_max,
+          'd_d': d_d}
     
-    # In case of sensitivity analysis use all three possible model parameters
-    if sensitivity:
-        K = param[1]
-        d_d = param[2]
-        MP = {'R_max': 10**param[0],
-              'K': param[1],
-              'd_d': param[2]}
+    # Also add K if required for optimization
+    if K_var:
+        K = 10**param[2]
+        MP['K'] = K
             
     # Simulate DOE for current MP
     exp_names, exp_data, sim_data = simulate_DOE(MP, case, path=path, cf_file=cf_file, 
-                                                 verbose=0, sensitivity=sensitivity)
+                                                 verbose=0)
 
     # Calculate loss criterion
     loss = 0
@@ -254,12 +277,12 @@ def cost_MP_DOE(param, crit='RMSE_full', case='all', path='data/exp_data',
     for i in range(len(exp_names)):
         if crit == 'RMSE_full':
             loss += np.sqrt(np.mean((sim_data[i]['w02_exp']-sim_data[i]['w02_mod'])**2))/len(exp_names)
-    
+
     if verbose > 0:
-        if sensitivity:
-            print(f'Current MP: {R_max:.2e} | {K:.3e} | {d_d:.3e} || Loss: {loss:.2e}')  
+        if K_var:
+            print(f'Current MP: R {R_max:.2e} | d {d_d:.3e} | K {K:.3e} || Loss: {loss:.2e}')  
         else:
-            print(f'Current MP: {R_max:.2e} | {d_d:.3e} || Loss: {loss:.2e}')
+            print(f'Current MP: R {R_max:.2e} | d {d_d:.3e} || Loss: {loss:.2e}')
             
     return loss
 
@@ -268,10 +291,10 @@ def sensitivity_analysis(N_samples=1000, second_order=True,
                          case='all', path='data/exp_data', cf_file='exp_data_study_config.py'):
     problem = {
     'num_vars': 3,
-    'names': ['R_max', 'K', 'd_d'],
+    'names': ['R_max', 'd_d', 'K'],
     'bounds': [[-7, -4],        # Range for R_max (log)
-               [1, 200],        # Range for K (lin)
-               [1e-5, 1e-3]]    # Range for d_d (lin)
+               [-6, -4],        # Range for d_d (log)
+               [0, 2]]         # Range for K (log)
     }
 
     param_values = saltelli.sample(problem, N_samples, calc_second_order=second_order)
@@ -280,7 +303,7 @@ def sensitivity_analysis(N_samples=1000, second_order=True,
     Y = np.zeros(param_values.shape[0])
     for i in range(param_values.shape[0]):
         Y[i] = cost_MP_DOE(param_values[i,:], case=case, path=path, cf_file=cf_file, 
-                           verbose=1, sensitivity=True)
+                           verbose=1)
     sobol_indices = sobol.analyze(problem, Y, calc_second_order=second_order)
     
     exp_pth = os.path.join(os.path.dirname( __file__ ),"..","..",
@@ -294,33 +317,46 @@ def sensitivity_analysis(N_samples=1000, second_order=True,
     
     return sobol_indices
     
-def visualize_MP_DOE(MP, case='all', path='data/exp_data', cf_file='exp_data_study_config.py', legend=True):
+def visualize_MP_DOE(MP, case='all', path='data/exp_data', cf_file='exp_data_study_config.py', 
+                     legend=True, rel=False, zoom=False, highlights=[], hl=[]):
     # Simulate full 
     exp_names, exp_data, sim_data = simulate_DOE(MP, case=case, path=path, cf_file=cf_file, verbose=0)
     RMSE = sum([sim_data[i]['RMSE'] for i in range(len(exp_names))])/len(exp_names)
     
-    # Create plot
-    mp.init_plot(scl_a4=1, page_lnewdth_cm=13.7, fnt='Arial', mrksze=4, 
-                 fontsize = 5, labelfontsize=11, tickfontsize=9, 
-                 aspect_ratio=[13.7, 13.7/2])
-    markers = ['o', 's', 'D', '^', 'v', '<', '>', 'h']
+
+    markers = ['o', 'D', '^', 'v', '<', '>', 'h']
+    hl_col=[mp.green, mp.red]
     
     if legend:
+        # Create plot
+        mp.init_plot(scl_a4=2, page_lnewdth_cm=13.7, fnt='Arial', mrksze=4, 
+                     fontsize = 5, labelfontsize=11, tickfontsize=9, 
+                     aspect_ratio=[1,1])
+        
         fig, ax = plt.subplots(1,2) 
         for i in range(len(exp_names)):
-            ax[0].scatter(sim_data[i]['w02_exp'], sim_data[i]['w02_mod'], 
-                          edgecolor='k', zorder=1, label=exp_names[i],
-                          marker=np.random.choice(markers),
-                          linewidths=0.5, alpha=0.7)
-        ax[0].axline((0, 0), slope=1, color=mp.red, linestyle='--', zorder=3)
+            if exp_names[i] in highlights:
+                ax[0].scatter(sim_data[i]['w02_exp'], sim_data[i]['w02_mod'], 
+                              edgecolor='k', zorder=99, label=exp_names[i],
+                              marker=np.random.choice(markers),
+                              linewidths=0.5, alpha=1)
+            else:
+                ax[0].scatter(sim_data[i]['w02_exp'], sim_data[i]['w02_mod'], 
+                              edgecolor='k', zorder=1, label=exp_names[i],
+                              marker=np.random.choice(markers),
+                              linewidths=0.5, alpha=0.7)
+        ax[0].axline((0, 0), slope=1, color=mp.red, linestyle='--', zorder=0)
+        if rel:
+            ax[0].axline((0, 0), slope=1.2, color='gray', linestyle='--', zorder=0)
+            ax[0].axline((0, 0), slope=0.8, color='gray', linestyle='--', zorder=0)
         
         # Customize axes
         ax[0].set_xlabel(r'$w_{\mathrm{exp}}(0,2)$ / $-$')
         ax[0].set_ylabel(r'$w_{\mathrm{mod}}(0,2)$ / $-$')
-        ax[0].text(0.98, 0.05, r"$\mathrm{RMSE}"+f"={RMSE:.2e}$", 
-                   transform=ax[0].transAxes, verticalalignment='bottom', 
-                   horizontalalignment='right',
-                   bbox=dict(boxstyle='round', facecolor='w', alpha=1))
+        # ax[0].text(0.98, 0.05, r"$\mathrm{RMSE}"+f"={RMSE:.2e}$", 
+        #            transform=ax[0].transAxes, verticalalignment='bottom', 
+        #            horizontalalignment='right',
+        #            bbox=dict(boxstyle='round', facecolor='w', alpha=1))
     
         ax[0].grid(True)
         ax[1].axis('off')  # Hide the axes of the right subplot
@@ -333,36 +369,66 @@ def visualize_MP_DOE(MP, case='all', path='data/exp_data', cf_file='exp_data_stu
                                    'export/w_exp_mod_leg.pdf')
     
     else:
+        # Create plot
+        mp.init_plot(scl_a4=2, page_lnewdth_cm=13.7, fnt='Arial', mrksze=4, 
+                     fontsize = 11, labelfontsize=11, tickfontsize=9, 
+                     aspect_ratio=[1,1])
+        
         fig, ax = plt.subplots() 
+        hl_col=[mp.green, mp.red]
+        cnt=0
         for i in range(len(exp_names)):
-            ax.scatter(sim_data[i]['w02_exp'], sim_data[i]['w02_mod'], 
-                          edgecolor='k', zorder=1, label=exp_names[i],
-                          marker=np.random.choice(markers),
-                          linewidths=0.5, alpha=0.7)
-        ax.axline((0, 0), slope=1, color=mp.red, linestyle='--', zorder=3)
+            if exp_names[i] in highlights:
+                ax.scatter(sim_data[i]['w02_exp'], sim_data[i]['w02_mod'], 
+                              edgecolor='k', zorder=99,
+                              marker='s', s=20, color=hl_col[cnt%2],
+                              linewidths=0.5, alpha=1, label=hl[cnt])
+                cnt+=1
+            else:
+                ax.scatter(sim_data[i]['w02_exp'], sim_data[i]['w02_mod'], 
+                              edgecolor='k', zorder=1, 
+                              marker=np.random.choice(markers),
+                              linewidths=0.5, alpha=0.5)
+        ax.axline((0, 0), slope=1, color=mp.red, linestyle='--', zorder=0)
+        if rel:
+            ax.axline((0, 0), slope=1.2, color='gray', linestyle='--', zorder=0)
+            ax.axline((0, 0), slope=0.8, color='gray', linestyle='--', zorder=0)
         
         # Customize axes
         ax.set_xlabel(r'$w_{\mathrm{exp}}(0,2)$ / $-$')
         ax.set_ylabel(r'$w_{\mathrm{mod}}(0,2)$ / $-$')
-        ax.text(0.98, 0.05, r"$\mathrm{RMSE}"+f"={RMSE:.3e}$", 
-                   transform=ax.transAxes, verticalalignment='bottom', 
-                   horizontalalignment='right',
-                   bbox=dict(boxstyle='round', facecolor='w', alpha=1))
-    
+        # ax.text(0.98, 0.05, r"$\mathrm{RMSE}"+f"={RMSE:.3e}$", 
+        #            transform=ax.transAxes, verticalalignment='bottom', 
+        #            horizontalalignment='right',
+        #            bbox=dict(boxstyle='round', facecolor='w', alpha=1))
+        if len(highlights)>0:
+            ax.legend()
         ax.grid(True)
-    
+        if zoom:
+            ax.set_xlim([0,0.05])
+            ax.set_ylim([0,0.05])
+        else:
+            lim = [0,ax.get_xlim()[1]]
+            ax.set_xlim(lim)
+            ax.set_ylim(lim)
+        
         plt.tight_layout()
         
         # Generate export strings
-        fig_exp_pth = os.path.join(os.path.dirname( __file__ ),"..","..",
-                                   'export/w_exp_mod_noleg.pdf')
+        if zoom:
+            fig_exp_pth = os.path.join(os.path.dirname( __file__ ),"..","..",
+                                       'export/w_exp_mod_noleg_zoom.pdf')
+        else:
+            fig_exp_pth = os.path.join(os.path.dirname( __file__ ),"..","..",
+                                       'export/w_exp_mod_noleg.pdf')
     # Export figure
     plt.savefig(fig_exp_pth)
     
     return exp_names, exp_data, sim_data 
 
 def visualize_MP_exp(MP, name=None, idx=None, data=None, export=False,
-                     path='data/exp_data', cf_file='exp_data_study_config.py'):
+                     path='data/exp_data', cf_file='exp_data_study_config.py',
+                     text=None, title=False):
     
     # If data is not provided, resimulate full DOE
     if data is None:
@@ -383,21 +449,29 @@ def visualize_MP_exp(MP, name=None, idx=None, data=None, export=False,
             print(f"'{name}' is not in exp_names")
     
     # Initialize
-    mp.init_plot(scl_a4=1, page_lnewdth_cm=13.7, fnt='Arial', mrksze=4, 
+    mp.init_plot(scl_a4=2, page_lnewdth_cm=13.7, fnt='Arial', mrksze=4, 
                  fontsize = 11, labelfontsize=11, tickfontsize=9, 
-                 aspect_ratio=[13.7, 13.7/2])
+                 aspect_ratio=[1,1])
     
     # Plot
     fig, ax = plt.subplots()     
     ax.plot(sim_data[idx]['t']/60, sim_data[idx]['w02_exp'], marker='s', color=mp.green, mec='k', label='exp')
     ax.plot(sim_data[idx]['t']/60, sim_data[idx]['w02_mod'], marker='s', color=mp.red, mec='k', label='mod')
     
+    if text is not None:
+        ax.text(0.98, 0.02, text, 
+                transform=ax.transAxes, verticalalignment='bottom', 
+                horizontalalignment='right',
+                bbox=dict(alpha=0.8,facecolor='w', edgecolor='none',pad=1.2))
+    
     # Customize axes
     ax.set_xlabel('$t$ / min')
     ax.set_ylabel('$w(0,2,t)$ / $-$')
-    ax.set_title(f'Experiment: {exp_names[idx]}')
+    if title:
+        ax.set_title(f'Experiment: {exp_names[idx]}')
     ax.set_xlim([sim_data[idx]['t'][0]/60,sim_data[idx]['t'][-1]/60])
     ax.grid(True)
+    ax.legend(loc='center right')
     plt.tight_layout()
     
     if export:
@@ -408,13 +482,17 @@ def visualize_MP_exp(MP, name=None, idx=None, data=None, export=False,
     return ax, fig
 
 def visualize_vg_RMSE_EF(sim_data, exp_data, vg_case='sum', sort='vg', 
-                         export=False, export_name=''):
+                         export=False, export_name='', rel=False):
     # Initialize
     mp.init_plot(scl_a4=1, page_lnewdth_cm=13.7, fnt='Arial', mrksze=4, 
                  fontsize = 12, labelfontsize=11, tickfontsize=9, 
                  aspect_ratio=[13.7, 13.7/2])
+    # mp.init_plot(scl_a4=2, page_lnewdth_cm=13.7, fnt='Arial', mrksze=4, 
+    #              fontsize = 12, labelfontsize=11, tickfontsize=9, 
+    #              aspect_ratio=[1,1])
     
-    RMSE_arr = np.array([sim_data[i]['RMSE'] for i in range(len(sim_data))])
+    RMSE_arr = np.array([sim_data[i]['RMSE'] for i in range(len(sim_data))])    
+    RE_arr = np.array([sim_data[i]['RE'] for i in range(len(sim_data))])
     E_F_arr = np.array([sim_data[i]['M_e_int'][-1]/(sim_data[i]['M_e_int'][-1]+sim_data[i]['M_f_int'][-1]) for i in range(len(sim_data))])
     if vg_case == 'sum':
         vg_arr = np.array([sum(exp_data[i]['vg']) for i in range(len(exp_data))])
@@ -422,10 +500,20 @@ def visualize_vg_RMSE_EF(sim_data, exp_data, vg_case='sum', sort='vg',
         vg_arr = np.array([max(exp_data[i]['vg']) for i in range(len(exp_data))])
     N = np.arange(len(RMSE_arr))
     
+    if rel:
+        err = RE_arr
+        lbl = 'relative error'
+        ylbl = 'Relative Error'        
+    else:
+        err = RMSE_arr
+        lbl = r'$\mathrm{RMSE}$'
+        ylbl = r'$\mathrm{RMSE}$'
+        lim = [0,1]
+        
     # Linear approximations
     vg_cont = np.linspace(min(vg_arr), max(vg_arr),100)
-    c_RMSE = np.polyfit(vg_arr, RMSE_arr, 1)
-    RMSE_cont = np.polyval(c_RMSE, vg_cont)
+    c_err = np.polyfit(vg_arr, err, 1)
+    err_cont = np.polyval(c_err, vg_cont)
     c_E_F = np.polyfit(vg_arr, E_F_arr, 1)
     E_F_cont = np.polyval(c_E_F, vg_cont)
     
@@ -433,32 +521,41 @@ def visualize_vg_RMSE_EF(sim_data, exp_data, vg_case='sum', sort='vg',
     fig, ax1 = plt.subplots()  
     ax2 = ax1.twinx() 
 
-    ax1.scatter(vg_arr, RMSE_arr, edgecolor='k', color=mp.green, 
-               marker='s', zorder=2, label=r'RMSE')
-    ax2.scatter(vg_arr, E_F_arr, edgecolor='k', color=mp.red, 
-               marker='s', zorder=2, label=r'Transport')
+    ax2.scatter(vg_arr, err, edgecolor='k', color=mp.green, 
+               marker='s', zorder=2, label=lbl, alpha=0.8)
+    ax1.scatter(vg_arr, E_F_arr, edgecolor='k', color=mp.red, 
+               marker='s', zorder=3, label=r'$X_{\mathrm{e,int}}$', alpha=0.8)
+    ax1.scatter([10,10], [-1,-1], edgecolor='k', color=mp.green, 
+               marker='s', zorder=2, label=lbl)
 
-    ax1.plot(vg_cont, RMSE_cont, color=mp.green, marker=None, linestyle='-.',
+
+    ax2.plot(vg_cont, err_cont, color=mp.green, marker=None, linestyle='-.',
              zorder=0)
-    ax2.plot(vg_cont, E_F_cont, color=mp.red, marker=None, linestyle='-.',
+    ax1.plot(vg_cont, E_F_cont, color=mp.red, marker=None, linestyle='-.',
              zorder=0)
     
     # Customize axes
     if vg_case == 'sum':
-        ax1.set_xlabel(r'$\sum \dot{V}_g$ / $\mathrm{mL\,min^{-1}}$')
+        ax1.set_xlabel(r'$\sum \dot{V}_{\mathrm{g}}$ / $\mathrm{mL\,min^{-1}}$')
     else:
-        ax1.set_xlabel(r'max $\dot{V}_g$ / $\mathrm{mL\,min^{-1}}$')
+        ax1.set_xlabel(r'max $\dot{V}_{\mathrm{g}}$ / $\mathrm{mL\,min^{-1}}$')
 
-    ax1.set_ylabel('RMSE / $-$')
-    ax2.set_ylabel(r'$\dot{M}_{\mathrm{e,int}}/(\dot{M}_{\mathrm{e,int}}+\dot{M}_{\mathrm{f,int}})$ / $-$')
-    ax1.legend(loc='upper left')
-    ax2.legend(loc='center right')
+    ax2.set_ylabel(ylbl)
+    ax1.set_ylabel(r'$X_{\mathrm{e,int}}$')
+    # ax1.legend(loc='lower left')
+    # ax2.legend(loc='upper left')
     # ax1.set_ylim([0,ax1.get_ylim()[1]])
-    ax1.set_ylim([0,np.ceil(max(RMSE_arr)*1000)/1000+0.002])
-    ax2.set_ylim([0,1])
+    ax1.set_ylim([0,1])
+    if not rel:
+        ax2.set_ylim([0,np.ceil(max(RMSE_arr)*1000)/1000+0.002])
     
     ax1.grid(True)
     plt.tight_layout()
+    
+    box = ax1.get_position()
+    ax1.set_position([box.x0, box.y0, box.width, box.height*0.9])
+    ax1.legend(bbox_to_anchor=(-0.03, 1.0),loc='lower left', ncol=3)
+    # ax2.legend(bbox_to_anchor=(0.15, 1.0),loc='lower left', ncol=3)
     
     fig_exp_pth = os.path.join(os.path.dirname( __file__ ),"..","..",
                                'export/vg_RMSE_EF_'+export_name+'.pdf')
@@ -466,7 +563,7 @@ def visualize_vg_RMSE_EF(sim_data, exp_data, vg_case='sum', sort='vg',
     if export:
         plt.savefig(fig_exp_pth)
     
-    return RMSE_arr, E_F_arr, vg_arr
+    return RMSE_arr, RE_arr, E_F_arr, vg_arr
 
 def visualize_hist_RMSE(sim_data, export=False):
     # Initialize
@@ -568,11 +665,15 @@ def generate_run_table():
     
 #%% MAIN           
 if __name__ == '__main__':
-    OPT = False                      # Set to true to optimize model parameters to experiments
-    SENSITIVITY = False              # Set to true to perform sensitivity analysis
-    READ_EXP = True                 # Only read experiments
+    # Define what to to
+    ## OPT: Set to true to optimize model parameters to experiments
+    ## SENSITIVITY: Set to true to perform sensitivity analysis
+    ## READ_EXP: Only read experiments
+    # TASKS = ['OPT', 'SENSITIVITY', 'READ_EXP']
+    TASKS = ['OPT']
+    # TASKS = ['SENSITIVITY']
     
-    if OPT:        
+    if 'OPT' in TASKS:        
         plt.close('all')
         
         # Usage example: Reading a single experiment
@@ -583,7 +684,10 @@ if __name__ == '__main__':
         exp_names, exp_data = read_folder()
         
         # Define initial guess for optimization procedure
-        param = [np.log10(1e-5), 1e-5] 
+        # [Gamma_max (log), K (log), d_d(log)]
+        # param = [np.log10(1e-6), np.log10(1e-5), np.log10(1e1)] 
+        # To only optimize for Gamma_max and d_d simply leave out K        
+        param = [np.log10(1e-6), np.log10(1e-5)] 
         
         # Define case
         ## 'all': flotation and extraction (case I)
@@ -595,41 +699,44 @@ if __name__ == '__main__':
         ## 'minimize': scipy.minimize
         ## 'evo': genetic algorithm
         ## 'brute': grid search
-        algo = 'evo'
-        MP = {'R_max': 10**param[0],
-              'd_d': param[1]}
-        #loss = cost_MP_DOE(param)
+        algo = 'minimize'
         
-        # Call optimizer
-        MP_opt = opt_MP_DOE(param, algo=algo, case=case)
+        if 'LOAD' in TASKS:
+            # Load optimization from file
+            imp_pth = os.path.join(os.path.dirname( __file__ ),"..","..",
+                                   'export/opt_'+algo+'_'+case+'.npy')
+            MP_opt = np.load(imp_pth, allow_pickle=True).item()
+        else:
+            # Call optimizer
+            MP_opt = opt_MP_DOE(param, algo=algo, case=case)
         #exp_names, exp_data, sim_data = simulate_DOE(MP_opt)
         
         # Visualize results
-        exp_names, exp_data, sim_data = visualize_MP_DOE(MP_opt, case=case, legend=False)
+        highlights = ['240425_MG_0.2_10-00-00_1.00','240815_MG_0.2_30-20-10_3.00']
+        highlights_labels = ['(a)', '(b)']
+        exp_names, exp_data, sim_data = visualize_MP_DOE(MP_opt, case=case, 
+                                                         legend=False, zoom=False,
+                                                         highlights=highlights,
+                                                         hl=highlights_labels)
         data_dict = {'exp_names': exp_names,
                      'exp_data': exp_data,
                      'sim_data': sim_data}
 
-        exp_test = '240425_MG_0.2_10-00-00_1.00'
-        visualize_MP_exp(MP, data=data_dict, name=exp_test, export=True)
-        exp_test = '241114_MG_0.2_30-20-10_1.00_45min'
-        visualize_MP_exp(MP, data=data_dict, name=exp_test, export=True)
-        exp_test = '241223_MG_0.2_1.5-1-1_1.0_V1'
-        visualize_MP_exp(MP, data=data_dict, name=exp_test, export=True)
-        exp_test = '240815_MG_0.2_30-20-10_3.00'
-        visualize_MP_exp(MP, data=data_dict, name=exp_test, export=True)
-        exp_test = '240826_MG_0.2_30-20-10_2.00'
-        visualize_MP_exp(MP, data=data_dict, name=exp_test, export=True)
+        visualize_MP_exp(MP_opt, data=data_dict, name=highlights[0], 
+                         export=True, text='(a)')
+        visualize_MP_exp(MP_opt, data=data_dict, name=highlights[1], 
+                         export=True, text='(b)')
         
-        RMSE_arr, E_F_arr, vg_arr = visualize_vg_RMSE_EF(sim_data, exp_data, vg_case='sum', 
-                                                         export=True, export_name=case+'_sum_vg')
+        RMSE_arr, RE_arr, E_F_arr, vg_arr = visualize_vg_RMSE_EF(sim_data, exp_data, vg_case='sum', 
+                                                                 export=True, export_name=case+'_sum_vg',
+                                                                 rel=False)
     
-    if SENSITIVITY:
+    if 'SENSITIVITY' in TASKS:
         # Perform sensitivity analysis
-        # sob_i = sensitivity_analysis(N_samples=1024)
-        sob_i = sensitivity_analysis(N_samples=8)
+        sob_i = sensitivity_analysis(N_samples=1024)
+        # sob_i = sensitivity_analysis(N_samples=16)
         
-    if READ_EXP:
+    if 'READ_EXP' in TASKS:
         exp_names, exp_data = read_folder()
         rt = generate_run_table()
         

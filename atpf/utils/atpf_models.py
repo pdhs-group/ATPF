@@ -54,8 +54,8 @@ def regression_bubble(raw_file='data/raw/v_d32_twill.txt', text=True):
     
     # Customize axes
     ax.set_xlabel(r'$\dot{V}_{\mathrm{g}}$ / $\mathrm{mL\,min^{-1}}$')
-    ax.set_ylabel(r'$\overline{d}_\mathrm{b}$ / $\mathrm{\mu m}$')
-    ax.text(0.98, 0.05, r"$\mathrm{RMSE}"+f"={cost_bubble(P,v,d):.1f}$", 
+    ax.set_ylabel(r'$d_\mathrm{b}$ / $\mathrm{\mu m}$')
+    ax.text(0.98, 0.05, r"$\mathrm{RMSE}"+f"={cost_bubble(P,v,d):.1f}"+r"\,\mu\mathrm{m}$", 
             transform=ax.transAxes, verticalalignment='bottom', 
             horizontalalignment='right',
             bbox=dict(boxstyle='round', facecolor='w', alpha=1))
@@ -84,6 +84,8 @@ def regression_bubble(raw_file='data/raw/v_d32_twill.txt', text=True):
     np.save(file_exp_pth,
             {'Model':'d=P[0]*v+P[1]*np.log(v)+P[2]',
              'P':P, 'vg_min':min(v), 'vg_max':max(v)})
+    
+    return v, d, P
 
 # Linear regression for height of mixing zone
 def regression_mixing_height(raw_file='data/raw/raw data_height mixing.csv',
@@ -121,7 +123,7 @@ def regression_mixing_height(raw_file='data/raw/raw data_height mixing.csv',
                 {'Model':'h=m*np.sum(v)',
                  'm':m*1e-3})
     else:
-        mod = LinearRegression(fit_intercept=True)#, positive=True)
+        mod = LinearRegression(fit_intercept=False)#, positive=True)
         mod.fit(V, np.mean(h, axis=1))
         R2 = mod.score(V, np.mean(h, axis=1))
         
@@ -210,7 +212,7 @@ def regression_mixing_height(raw_file='data/raw/raw data_height mixing.csv',
     plt.tight_layout()
     
     # Report R2
-    print(f'R2 = {R2:.4f}')
+    #print(f'R2 = {R2:.4f}')
     
     # Export figure
     if simple:
@@ -218,6 +220,7 @@ def regression_mixing_height(raw_file='data/raw/raw data_height mixing.csv',
     else:        
         plt.savefig(fig_exp_pth+'_multiple.pdf')
     
+    return V, h, mod
 
 # Regression for volume fraction based on gas flow rate
 def regression_v_fraction(raw_file_calib='data/raw/raw data_height mixing.csv', 
@@ -280,7 +283,7 @@ def regression_v_fraction(raw_file_calib='data/raw/raw data_height mixing.csv',
         V = poly.fit_transform(V)
         V_exp = poly.transform(V_exp)
         
-    mod = LinearRegression(fit_intercept=True)#, positive=True)
+    mod = LinearRegression(fit_intercept=False)#, positive=True)
     mod.fit(V, v_mean)
     R2 = mod.score(V, v_mean)
     
@@ -402,7 +405,7 @@ def regression_v_fraction(raw_file_calib='data/raw/raw data_height mixing.csv',
             {'Model':'MLR, input [Vg1, Vg2, Vg3] in mL/min, output v in -',
              'mod': mod})
       
-    return V, k, mod
+    return V, v, mod
 
 # Cost function for bubble regression:
 def cost_bubble(P,v_exp,d_exp):
@@ -475,14 +478,14 @@ if __name__ == '__main__':
     
     # Regression for twill and metal
     # regression_bubble(raw_file='data/raw/v_d32_glass.txt')
-    regression_bubble(raw_file='data/raw/v_d32_twill.txt', text=False)
+    V_d, d, mod_d = regression_bubble(raw_file='data/raw/v_d32_twill.txt', text=False)
     # regression_bubble(raw_file='data/raw/v_d32_metal.txt')
     
     # Regression for height of mixing zone
-    regression_mixing_height(simple=False)
+    V_h, h, mod_h = regression_mixing_height(simple=False)
     
     # Regression conductivity
-    V, k, mod = regression_v_fraction(poly=False)
+    V_v, v, mod_v = regression_v_fraction(poly=False)
 
     
     

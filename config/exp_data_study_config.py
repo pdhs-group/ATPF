@@ -54,6 +54,6 @@ config = {
         # Adsorption specific parameters
         'k_a': 2e-1,                         # Adsorption rate [m³/mol s]
         'k_d': 1e-2,                         # Desorption rate [1/s]
-        'K': 20,                             # Steady state Langmuir constant [m³/mol]
+        'K': 12.5,                           # Steady state Langmuir constant [m³/mol]
         'R_max': 5e-7,                       # Maximum surface loading [mol/m²]
 }
